@@ -157,19 +157,9 @@ main() {
   bun install --frozen-lockfile 2>/dev/null || bun install
   ok "Dependencies installed"
 
-  # Link the jarvis command globally
+  # Link the jarvis command globally via bun link
   bun link 2>/dev/null || true
   bun link @jarvis-ai/daemon 2>/dev/null || true
-
-  # Also create a direct wrapper script as a fallback
-  BUN_BIN="$HOME/.bun/bin"
-  mkdir -p "$BUN_BIN"
-
-  cat > "$BUN_BIN/jarvis" << 'WRAPPER'
-#!/usr/bin/env bash
-exec bun "$HOME/.jarvis/daemon/bin/jarvis.ts" "$@"
-WRAPPER
-  chmod +x "$BUN_BIN/jarvis"
 
   ensure_bun_path
   add_path_to_shell
@@ -177,8 +167,20 @@ WRAPPER
   if command -v jarvis &> /dev/null; then
     ok "jarvis command is available"
   else
-    warn "jarvis installed but not in PATH yet. Restart your terminal or run:"
-    echo -e "    ${DIM}export PATH=\"\$HOME/.bun/bin:\$PATH\"${RESET}"
+    # bun link didn't work — create a shell wrapper as fallback
+    BUN_BIN="$HOME/.bun/bin"
+    mkdir -p "$BUN_BIN"
+    printf '#!/usr/bin/env bash\nexec bun "%s/bin/jarvis.ts" "$@"\n' "$INSTALL_DIR" > "$BUN_BIN/jarvis"
+    chmod +x "$BUN_BIN/jarvis"
+
+    ensure_bun_path
+
+    if command -v jarvis &> /dev/null; then
+      ok "jarvis command is available"
+    else
+      warn "jarvis installed but not in PATH yet. Restart your terminal or run:"
+      echo -e "    ${DIM}export PATH=\"\$HOME/.bun/bin:\$PATH\"${RESET}"
+    fi
   fi
 
   echo ""
