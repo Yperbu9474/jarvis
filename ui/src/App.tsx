@@ -15,12 +15,13 @@ const CommandPage = React.lazy(() => import("./pages/CommandPage"));
 const AuthorityPage = React.lazy(() => import("./pages/AuthorityPage"));
 const SettingsPage = React.lazy(() => import("./pages/SettingsPage"));
 const AwarenessPage = React.lazy(() => import("./pages/AwarenessPage"));
+const WorkflowsPage = React.lazy(() => import("./pages/WorkflowsPage"));
 
-type Route = "chat" | "tasks" | "pipeline" | "memory" | "calendar" | "office" | "knowledge" | "command" | "authority" | "awareness" | "settings";
+type Route = "chat" | "tasks" | "pipeline" | "memory" | "calendar" | "office" | "knowledge" | "command" | "authority" | "awareness" | "workflows" | "settings";
 
 function getRoute(): Route {
   const hash = window.location.hash.replace("#/", "");
-  if (["chat", "tasks", "pipeline", "memory", "calendar", "office", "knowledge", "command", "authority", "awareness", "settings"].includes(hash)) {
+  if (["chat", "tasks", "pipeline", "memory", "calendar", "office", "knowledge", "command", "authority", "awareness", "workflows", "settings"].includes(hash)) {
     return hash as Route;
   }
   return "chat";
@@ -121,6 +122,7 @@ export function App() {
           <NavItem icon={"\u25C7"} label="Knowledge" route="knowledge" active={route} onClick={navigate} />
           <NavItem icon={"\u25A3"} label="Command Center" route="command" active={route} onClick={navigate} />
           <NavItem icon={"\u25CE"} label="Awareness" route="awareness" active={route} onClick={navigate} />
+          <NavItem icon={"\u26A1"} label="Workflows" route="workflows" active={route} onClick={navigate} />
           <NavItem icon={"\u2666"} label="Authority" route="authority" active={route} onClick={navigate} />
           <NavItem icon={"\u2699"} label="Settings" route="settings" active={route} onClick={navigate} />
         </div>
@@ -141,6 +143,7 @@ export function App() {
           {route === "knowledge" && <KnowledgePage />}
           {route === "command" && <CommandPage />}
           {route === "awareness" && <AwarenessPage />}
+          {route === "workflows" && <WorkflowsPage workflowEvents={ws.workflowEvents} sendMessage={ws.sendMessage} />}
           {route === "authority" && <AuthorityPage />}
           {route === "settings" && <SettingsPage />}
         </React.Suspense>

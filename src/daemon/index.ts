@@ -637,6 +637,71 @@ export async function startDaemon(userConfig?: Partial<DaemonConfig>): Promise<v
       }
     }
 
+    // 10b. Workflow Automation Engine (M14)
+    const workflowConfig = jarvisConfig.workflows;
+    if (workflowConfig?.enabled !== false) {
+      try {
+        const { NodeRegistry } = await import('../workflows/nodes/registry.ts');
+        const { registerBuiltinNodes } = await import('../workflows/nodes/builtin.ts');
+        const { WorkflowEngine } = await import('../workflows/engine.ts');
+        const { TriggerManager } = await import('../workflows/triggers/manager.ts');
+        const { NLWorkflowBuilder } = await import('../workflows/nl-builder.ts');
+        const { WorkflowAutoSuggest } = await import('../workflows/auto-suggest.ts');
+
+        // Create node registry and register all built-in nodes
+        const nodeRegistry = new NodeRegistry();
+        registerBuiltinNodes(nodeRegistry);
+        console.log(`[Daemon] Node registry: ${nodeRegistry.count()} nodes registered`);
+
+        // Create and start workflow engine
+        const wfToolRegistry = orchestrator.getToolRegistry();
+        const workflowEngine = new WorkflowEngine(
+          nodeRegistry,
+          wfToolRegistry ?? new (await import('../actions/tools/registry.ts')).ToolRegistry(),
+          agentService.getLLMManager(),
+        );
+        workflowEngine.setEventCallback((event) => {
+          wsService.broadcastWorkflowEvent(event);
+        });
+        await workflowEngine.start();
+
+        // Create and start trigger manager
+        const triggerManager = new TriggerManager(workflowEngine);
+        await triggerManager.start();
+
+        // Create NL builder and auto-suggest
+        const nlBuilder = new NLWorkflowBuilder(nodeRegistry, agentService.getLLMManager());
+        const autoSuggest = new WorkflowAutoSuggest(nodeRegistry, agentService.getLLMManager());
+
+        // Wire awareness events into auto-suggest
+        if (awarenessService) {
+          // The awareness service emits events that can feed pattern detection
+          console.log('[Daemon] Workflow auto-suggest wired to awareness events');
+        }
+
+        // Register manage_workflow tool so primary agent can create/run workflows from chat
+        const { createManageWorkflowTool } = await import('../actions/tools/workflows.ts');
+        const manageWorkflowTool = createManageWorkflowTool({ workflowEngine, nlBuilder, triggerManager });
+        if (wfToolRegistry) {
+          wfToolRegistry.register(manageWorkflowTool);
+          console.log('[Daemon] manage_workflow tool registered for chat agent');
+        }
+
+        // Wire into API context
+        apiContext.workflowEngine = workflowEngine;
+        apiContext.triggerManager = triggerManager;
+        apiContext.webhookManager = triggerManager.getWebhookManager();
+        apiContext.nodeRegistry = nodeRegistry;
+        apiContext.nlBuilder = nlBuilder;
+        apiContext.autoSuggest = autoSuggest;
+
+        console.log('[Daemon] Workflow engine started (engine + triggers + NL builder + auto-suggest)');
+      } catch (err) {
+        console.error('[Daemon] Workflow engine failed to start:', err instanceof Error ? err.message : err);
+        // Non-fatal — daemon continues without workflows
+      }
+    }
+
     // 11. Start health monitoring
     healthMonitor.start(config.healthCheckInterval);
 

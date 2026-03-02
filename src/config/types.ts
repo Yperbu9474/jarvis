@@ -100,6 +100,15 @@ export type AuthorityConfig = {
   emergency_state: 'normal' | 'paused' | 'killed';
 };
 
+export type WorkflowConfig = {
+  enabled: boolean;
+  maxConcurrentExecutions: number;
+  defaultRetries: number;
+  defaultTimeoutMs: number;
+  selfHealEnabled: boolean;
+  autoSuggestEnabled: boolean;
+};
+
 export type JarvisConfig = {
   daemon: {
     port: number;
@@ -122,6 +131,7 @@ export type JarvisConfig = {
   personality: {
     core_traits: string[];
   };
+  workflows?: WorkflowConfig;
   authority: AuthorityConfig;
   heartbeat: HeartbeatConfig;
   active_role: string;  // role file name

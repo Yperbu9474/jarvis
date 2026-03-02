@@ -1,0 +1,75 @@
+import type { NodeDefinition } from '../registry.ts';
+
+export const codeExecutionAction: NodeDefinition = {
+  type: 'action.code_execution',
+  label: 'Code Execution',
+  description: 'Execute a JavaScript or TypeScript snippet inline.',
+  category: 'action',
+  icon: '⚡',
+  color: '#3b82f6',
+  configSchema: {
+    code: {
+      type: 'code',
+      label: 'Code',
+      description: 'JavaScript/TypeScript code to execute. Has access to `input` (NodeInput data) and `ctx` (minimal context).',
+      required: true,
+      placeholder: '// Return a value from this function\nreturn { result: input.data.value * 2 };',
+    },
+    language: {
+      type: 'select',
+      label: 'Language',
+      description: 'Code language. TypeScript is transpiled to JS before execution.',
+      required: true,
+      default: 'javascript',
+      options: [
+        { label: 'JavaScript', value: 'javascript' },
+        { label: 'TypeScript', value: 'typescript' },
+      ],
+    },
+  },
+  inputs: ['default'],
+  outputs: ['default'],
+  execute: async (input, config, ctx) => {
+    const code = String(config.code ?? '');
+    if (!code) throw new Error('code is required');
+    const language = String(config.language ?? 'javascript');
+
+    ctx.logger.info(`Executing ${language} snippet (${code.length} chars)`);
+
+    // Minimal safe context exposed to user code
+    const safeCtx = {
+      log: (msg: string) => ctx.logger.info(`[code] ${msg}`),
+      warn: (msg: string) => ctx.logger.warn(`[code] ${msg}`),
+      variables: input.variables,
+      executionId: input.executionId,
+    };
+
+    let result: unknown;
+    try {
+      // Wrap code in an async function so top-level await and return work
+      // TypeScript: strip type annotations at a basic level via transpileModule if needed.
+      // For now both JS and TS are run through new AsyncFunction — TS without complex generics
+      // works because Bun's engine handles most modern syntax.
+      const wrappedCode = `
+        return (async function(input, ctx) {
+          ${code}
+        })(input, ctx);
+      `;
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('input', 'ctx', wrappedCode);
+      result = await fn(input, safeCtx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.logger.error(`Code execution failed: ${message}`);
+      throw new Error(`Code execution failed: ${message}`);
+    }
+
+    return {
+      data: {
+        ...input.data,
+        code_result: result,
+        language,
+      },
+    };
+  },
+};

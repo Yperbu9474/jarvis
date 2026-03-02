@@ -379,6 +379,18 @@ export class WebSocketService implements Service {
     }
   }
 
+  /**
+   * Broadcast a workflow execution event to all connected clients.
+   */
+  broadcastWorkflowEvent(event: { type: string; workflowId: string; executionId?: string; nodeId?: string; data: Record<string, unknown>; timestamp: number }): void {
+    const message: WSMessage = {
+      type: 'workflow_event',
+      payload: event,
+      timestamp: event.timestamp,
+    };
+    this.wsServer.broadcast(message);
+  }
+
   broadcastApprovalUpdate(request: ApprovalRequest): void {
     const message: WSMessage = {
       type: 'notification',

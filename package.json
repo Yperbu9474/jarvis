@@ -28,6 +28,7 @@
   "dependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@xyflow/react": "^12.10.1",
     "discord.js": "^14.25.1",
     "edge-tts-universal": "^1.4.0",
     "openwakeword-wasm-browser": "^0.1.1",

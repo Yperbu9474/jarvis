@@ -24,6 +24,8 @@
 | 10 | Voice Interface | DONE | edge-tts TTS, binary WS protocol, wake word (openwakeword), voice state machine, streaming playback |
 | 11 | Authority & Autonomy | DONE | Runtime enforcement, soft-gate approvals, multi-channel delivery, audit trail, emergency controls, learning |
 | 12 | Distribution & Onboarding | DONE | `jarvis` CLI, interactive wizard, `install.sh` one-liner, npm packaging, systemd/launchd autostart |
+| 13 | Continuous Awareness | DONE | Full desktop capture, hybrid OCR+Vision, proactive suggestions, struggle detection, overlay widget |
+| 14 | Workflow Automation | DONE | n8n-style visual builder, 40 nodes, NL chat, triggers (cron/webhook/poll/observer), retry+fallback+self-heal, YAML export |
 
 ---
 
@@ -114,7 +116,7 @@ JARVIS becomes always-aware of what the user is doing by continuously monitoring
 
 ---
 
-### Milestone 14 — Workflow Automation Engine
+### Milestone 14 — Workflow Automation Engine [DONE]
 
 **"When X happens, do Y" in plain English. Kills Zapier and IFTTT.**
 

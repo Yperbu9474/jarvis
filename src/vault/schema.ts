@@ -461,4 +461,98 @@ function createTables(db: Database): void {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_suggestions_type ON awareness_suggestions(type)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_suggestions_created ON awareness_suggestions(created_at)`);
+
+  // ── Workflows (M14): Automation engine ──
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      authority_level INTEGER NOT NULL DEFAULT 3,
+      authority_approved INTEGER NOT NULL DEFAULT 0,
+      approved_at INTEGER,
+      approved_by TEXT,
+      tags TEXT,
+      current_version INTEGER NOT NULL DEFAULT 1,
+      execution_count INTEGER NOT NULL DEFAULT 0,
+      last_executed_at INTEGER,
+      last_success_at INTEGER,
+      last_failure_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      CHECK(enabled IN (0, 1)),
+      CHECK(authority_approved IN (0, 1))
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workflows_enabled ON workflows(enabled)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_workflows_updated ON workflows(updated_at)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_versions (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL,
+      definition TEXT NOT NULL,
+      changelog TEXT,
+      created_by TEXT NOT NULL DEFAULT 'user',
+      created_at INTEGER NOT NULL,
+      UNIQUE(workflow_id, version)
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_wv_workflow ON workflow_versions(workflow_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_wv_version ON workflow_versions(workflow_id, version)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_executions (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL,
+      trigger_type TEXT NOT NULL,
+      trigger_data TEXT,
+      status TEXT NOT NULL DEFAULT 'running'
+        CHECK(status IN ('running', 'completed', 'failed', 'cancelled', 'paused')),
+      variables TEXT,
+      error_message TEXT,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      duration_ms INTEGER
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_we_workflow ON workflow_executions(workflow_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_we_status ON workflow_executions(status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_we_started ON workflow_executions(started_at)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_step_results (
+      id TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL REFERENCES workflow_executions(id) ON DELETE CASCADE,
+      node_id TEXT NOT NULL,
+      node_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'running', 'completed', 'failed', 'skipped', 'waiting')),
+      input_data TEXT,
+      output_data TEXT,
+      error_message TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      started_at INTEGER,
+      completed_at INTEGER,
+      duration_ms INTEGER
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_wsr_execution ON workflow_step_results(execution_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_wsr_node ON workflow_step_results(node_id)`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_variables (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(workflow_id, key)
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_wvar_workflow ON workflow_variables(workflow_id)`);
 }

@@ -88,12 +88,22 @@ export type VoiceCallbacks = {
   onTTSEnd: () => void;
 };
 
+export type WorkflowEvent = {
+  type: string;
+  workflowId: string;
+  executionId?: string;
+  nodeId?: string;
+  data: Record<string, unknown>;
+  timestamp: number;
+};
+
 export function useWebSocket() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [taskEvents, setTaskEvents] = useState<TaskEvent[]>([]);
   const [contentEvents, setContentEvents] = useState<ContentEvent[]>([]);
   const [agentActivity, setAgentActivity] = useState<AgentActivityEvent[]>([]);
+  const [workflowEvents, setWorkflowEvents] = useState<WorkflowEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const streamBufferRef = useRef<string>("");
   const streamIdRef = useRef<string | null>(null);
@@ -321,6 +331,8 @@ export function useWebSocket() {
           timestamp: msg.timestamp,
         };
         setContentEvents((prev) => [...prev, event]);
+      } else if (msg.type === "workflow_event") {
+        setWorkflowEvents((prev) => [...prev.slice(-100), msg.payload as WorkflowEvent]);
       } else if (payload.source === "awareness_event") {
         // Awareness events (context changes, suggestions, etc.)
         const awarenessEvent = payload.event as { type: string; data: Record<string, unknown> };
@@ -386,7 +398,7 @@ export function useWebSocket() {
   );
 
   return {
-    messages, isConnected, sendMessage, taskEvents, contentEvents, agentActivity,
+    messages, isConnected, sendMessage, taskEvents, contentEvents, agentActivity, workflowEvents,
     wsRef,
     voiceCallbacksRef,
   };

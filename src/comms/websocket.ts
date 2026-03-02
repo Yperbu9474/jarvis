@@ -3,7 +3,8 @@ import path from 'node:path';
 
 export type WSMessage = {
   type: 'chat' | 'command' | 'status' | 'stream' | 'error' | 'notification'
-      | 'tts_start' | 'tts_end' | 'voice_start' | 'voice_end';
+      | 'tts_start' | 'tts_end' | 'voice_start' | 'voice_end'
+      | 'workflow_event';
   payload: unknown;
   id?: string;
   priority?: 'urgent' | 'normal' | 'low';
