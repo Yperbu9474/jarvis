@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket } from 'bun';
 import path from 'node:path';
+import type { SidecarManager } from '../sidecar/manager.ts';
 
 export type WSMessage = {
   type: 'chat' | 'command' | 'status' | 'stream' | 'error' | 'notification'
@@ -31,6 +32,7 @@ export class WebSocketServer {
   private apiRoutes: Map<string, MethodRoutes> = new Map();
   private staticDir: string | null = null;
   private publicDir: string | null = null;
+  private sidecarManager: SidecarManager | null = null;
 
   constructor(port: number = 3142) {
     this.port = port;
@@ -38,6 +40,10 @@ export class WebSocketServer {
 
   setHandler(handler: WSClientHandler): void {
     this.handler = handler;
+  }
+
+  setSidecarManager(manager: SidecarManager): void {
+    this.sidecarManager = manager;
   }
 
   /**
@@ -74,16 +80,33 @@ export class WebSocketServer {
     this.startTime = Date.now();
     const self = this;
 
-    this.server = Bun.serve({
+    this.server = Bun.serve<{ sidecar_id?: string }>({
       port: this.port,
 
       async fetch(req, server) {
         const url = new URL(req.url);
         const pathname = url.pathname;
 
+        // 0. Sidecar WebSocket upgrade
+        if (pathname === '/sidecar/connect' && self.sidecarManager) {
+          const token = url.searchParams.get('token');
+          if (!token) {
+            return new Response('Missing token', { status: 401 });
+          }
+
+          const claims = await self.sidecarManager.validateToken(token);
+          if (!claims) {
+            return new Response('Invalid or revoked token', { status: 403 });
+          }
+
+          const success = server.upgrade(req, { data: { sidecar_id: claims.sid } });
+          if (success) return undefined;
+          return new Response('WebSocket upgrade failed', { status: 500 });
+        }
+
         // 1. WebSocket upgrade
         if (pathname === '/ws') {
-          const success = server.upgrade(req);
+          const success = server.upgrade(req, { data: {} });
           if (success) return undefined;
           return new Response('WebSocket upgrade failed', { status: 500 });
         }
@@ -178,12 +201,24 @@ export class WebSocketServer {
 
       websocket: {
         open(ws) {
+          const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
+          if (sidecarId && self.sidecarManager) {
+            self.sidecarManager.handleSidecarConnect(ws, sidecarId);
+            return;
+          }
+
           self.clients.add(ws);
           console.log('[WebSocketServer] Client connected. Total clients:', self.clients.size);
           self.handler?.onConnect(ws);
         },
 
         async message(ws, message) {
+          const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
+          if (sidecarId && self.sidecarManager) {
+            self.sidecarManager.handleSidecarMessage(ws, message);
+            return;
+          }
+
           // Binary frame = audio data (mic audio from client)
           if (message instanceof Buffer) {
             if (self.handler?.onBinaryMessage) {
@@ -221,6 +256,12 @@ export class WebSocketServer {
         },
 
         close(ws) {
+          const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
+          if (sidecarId && self.sidecarManager) {
+            self.sidecarManager.handleSidecarDisconnect(sidecarId);
+            return;
+          }
+
           self.clients.delete(ws);
           console.log('[WebSocketServer] Client disconnected. Total clients:', self.clients.size);
           self.handler?.onDisconnect(ws);

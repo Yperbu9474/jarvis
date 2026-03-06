@@ -304,6 +304,9 @@ export async function startDaemon(userConfig?: Partial<DaemonConfig>): Promise<v
     const brainDomain = jarvisConfig.daemon.brain_domain ?? `localhost:${config.port}`;
     sidecarManager.setBrainUrl(brainDomain);
 
+    // 6d. Wire sidecar manager to WebSocket server for WS routing
+    wsService.getServer().setSidecarManager(sidecarManager);
+
     // 7. Register services in startup order
     //    Agent first (needs DB), Observers second, Channels third, Sidecar, WebSocket last (needs Agent)
     registry.register(agentService);

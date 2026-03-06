@@ -5,9 +5,10 @@
  * and connection tracking. Handles ES256 key pair lifecycle and JWT signing.
  */
 
-import { generateKeyPair, exportJWK, exportPKCS8, exportSPKI, importPKCS8, importSPKI, SignJWT, type JWK } from 'jose';
+import { generateKeyPair, exportJWK, exportPKCS8, exportSPKI, importPKCS8, importSPKI, SignJWT, jwtVerify, createRemoteJWKSet, type JWK } from 'jose';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import type { ServerWebSocket } from 'bun';
 import type { Service, ServiceStatus } from '../daemon/services.ts';
 import { getDb, generateId } from '../vault/schema.ts';
 import type {
@@ -16,6 +17,11 @@ import type {
   SidecarTokenClaims,
   ConnectedSidecar,
 } from './types.ts';
+import type { RPCRequest, RPCTimeouts, SidecarEvent, RPCResultPayload, RPCErrorPayload, RPCProgressPayload } from './protocol.ts';
+import { DEFAULT_RPC_TIMEOUTS } from './protocol.ts';
+import { EventScheduler } from './scheduler.ts';
+import { RPCTracker } from './rpc.ts';
+import { SidecarConnection } from './connection.ts';
 
 const ALG = 'ES256';
 const KEY_DIR_NAME = 'sidecar-keys';
@@ -36,8 +42,17 @@ export class SidecarManager implements Service {
   /** Runtime map of connected sidecars (not persisted) */
   private connected = new Map<string, ConnectedSidecar>();
 
+  /** Protocol infrastructure */
+  private scheduler: EventScheduler;
+  private rpcTracker: RPCTracker;
+  private sidecarConnections = new Map<string, SidecarConnection>();
+  private progressListeners = new Set<(sidecarId: string, rpcId: string, progress: number, message?: string) => void>();
+  private eventListeners = new Set<(sidecarId: string, event: SidecarEvent) => void>();
+
   constructor(dataDir: string) {
     this.dataDir = dataDir;
+    this.scheduler = new EventScheduler();
+    this.rpcTracker = new RPCTracker();
   }
 
   /**
@@ -55,8 +70,42 @@ export class SidecarManager implements Service {
     this._status = 'starting';
     try {
       await this.loadOrGenerateKeys();
+
+      // Wire scheduler handlers
+      this.scheduler.on('rpc_result', async (sidecarId, event) => {
+        const payload = event.payload as RPCResultPayload | RPCErrorPayload;
+        if (payload.error) {
+          this.rpcTracker.fail(payload.rpc_id, new Error(`${payload.error.code}: ${payload.error.message}`));
+        } else {
+          this.rpcTracker.resolve(payload.rpc_id, payload.result);
+        }
+      });
+
+      this.scheduler.on('rpc_progress', async (sidecarId, event) => {
+        const payload = event.payload as RPCProgressPayload;
+        for (const listener of this.progressListeners) {
+          listener(sidecarId, payload.rpc_id, payload.progress, payload.message);
+        }
+      });
+
+      this.scheduler.on('sidecar_event', async (sidecarId, event) => {
+        for (const listener of this.eventListeners) {
+          listener(sidecarId, event);
+        }
+      });
+
+      this.rpcTracker.onDetachedComplete((rpcId, result, error) => {
+        if (error) {
+          console.warn(`[SidecarManager] Detached RPC ${rpcId} failed:`, error.message);
+        } else {
+          console.log(`[SidecarManager] Detached RPC ${rpcId} completed`);
+        }
+      });
+
+      this.scheduler.start();
+
       this._status = 'running';
-      console.log('[SidecarManager] Started — keys loaded');
+      console.log('[SidecarManager] Started — keys loaded, scheduler running');
     } catch (err) {
       this._status = 'error';
       throw err;
@@ -65,6 +114,17 @@ export class SidecarManager implements Service {
 
   async stop(): Promise<void> {
     this._status = 'stopping';
+
+    // Stop scheduler
+    this.scheduler.stop();
+
+    // Close all sidecar connections and fail pending RPCs
+    for (const [id, conn] of this.sidecarConnections) {
+      this.rpcTracker.failAll(id, 'manager stopping');
+      conn.close();
+    }
+    this.sidecarConnections.clear();
+
     this.privateKey = null;
     this.publicKey = null;
     this.publicJwk = null;
@@ -283,6 +343,118 @@ export class SidecarManager implements Service {
   /** Check if a specific sidecar is connected */
   isConnected(id: string): boolean {
     return this.connected.has(id);
+  }
+
+  // --------------- Protocol: Token Validation ---------------
+
+  /**
+   * Verify a JWT token and return claims if valid and sidecar is enrolled.
+   */
+  async validateToken(token: string): Promise<SidecarTokenClaims | null> {
+    if (!this.publicKey) return null;
+
+    try {
+      const { payload } = await jwtVerify(token, this.publicKey, {
+        algorithms: [ALG],
+      });
+
+      const claims = payload as unknown as SidecarTokenClaims;
+
+      // Check sidecar is still enrolled
+      if (!claims.sid || !this.isEnrolled(claims.sid)) {
+        return null;
+      }
+
+      return claims;
+    } catch {
+      return null;
+    }
+  }
+
+  // --------------- Protocol: WebSocket Handlers ---------------
+
+  /** Called when a sidecar WebSocket connects (after JWT validation) */
+  handleSidecarConnect(ws: ServerWebSocket<unknown>, sidecarId: string): void {
+    const connection = new SidecarConnection(
+      sidecarId,
+      ws,
+      this.scheduler,
+      () => this.handleSidecarDisconnect(sidecarId),
+    );
+    connection.startHeartbeat();
+    this.sidecarConnections.set(sidecarId, connection);
+    this.touchSidecar(sidecarId);
+    console.log(`[SidecarManager] Sidecar WS connected: ${sidecarId}`);
+  }
+
+  /** Route inbound messages to the correct SidecarConnection */
+  handleSidecarMessage(ws: ServerWebSocket<unknown>, message: string | Buffer): void {
+    // Find connection by ws — we need the sidecar_id from ws.data
+    const sidecarId = (ws.data as any)?.sidecar_id as string;
+    if (!sidecarId) return;
+
+    const connection = this.sidecarConnections.get(sidecarId);
+    if (!connection) return;
+
+    if (message instanceof Buffer) {
+      connection.handleBinary(message);
+    } else {
+      connection.handleMessage(message.toString());
+    }
+  }
+
+  /** Called when a sidecar WebSocket disconnects */
+  handleSidecarDisconnect(sidecarId: string): void {
+    const conn = this.sidecarConnections.get(sidecarId);
+    if (conn) {
+      conn.close();
+      this.sidecarConnections.delete(sidecarId);
+    }
+    this.scheduler.removeSidecar(sidecarId);
+    this.rpcTracker.failAll(sidecarId, 'disconnected');
+    this.removeConnection(sidecarId);
+  }
+
+  // --------------- Protocol: RPC Dispatch ---------------
+
+  /**
+   * Send an RPC to a connected sidecar.
+   * Returns the result, "detached" if initial timeout expires, or throws on failure.
+   */
+  async dispatchRPC(
+    sidecarId: string,
+    method: string,
+    params: Record<string, unknown> = {},
+    timeouts: RPCTimeouts = DEFAULT_RPC_TIMEOUTS,
+  ): Promise<unknown> {
+    const connection = this.sidecarConnections.get(sidecarId);
+    if (!connection) {
+      throw new Error(`Sidecar ${sidecarId} is not connected`);
+    }
+
+    const rpcId = generateId();
+    const request: RPCRequest = {
+      type: 'rpc_request',
+      id: rpcId,
+      method,
+      params,
+    };
+
+    // Send the request over WebSocket
+    connection.sendRPC(request);
+
+    // Track and await result
+    return this.rpcTracker.dispatch(rpcId, sidecarId, method, timeouts);
+  }
+
+  /** Register a listener for RPC progress events */
+  onProgress(listener: (sidecarId: string, rpcId: string, progress: number, message?: string) => void): void {
+    this.progressListeners.add(listener);
+  }
+
+  /** Register a listener for sidecar events */
+  onEvent(listener: (sidecarId: string, event: SidecarEvent) => void): void {
+    this.eventListeners.add(listener);
   }
 
   // --------------- Helpers ---------------
