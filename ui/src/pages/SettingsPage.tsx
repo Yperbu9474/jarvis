@@ -5,6 +5,7 @@ import { HeartbeatPanel } from "../components/settings/HeartbeatPanel";
 import { RolePanel } from "../components/settings/RolePanel";
 import { IntegrationsPanel } from "../components/settings/IntegrationsPanel";
 import { ChannelsPanel } from "../components/settings/ChannelsPanel";
+import { SidecarPanel } from "../components/settings/SidecarPanel";
 
 export default function SettingsPage() {
   return (
@@ -38,6 +39,7 @@ export default function SettingsPage() {
           <HeartbeatPanel />
           <IntegrationsPanel />
           <ChannelsPanel />
+          <SidecarPanel />
         </div>
       </div>
     </div>

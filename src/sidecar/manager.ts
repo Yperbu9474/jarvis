@@ -168,7 +168,7 @@ export class SidecarManager implements Service {
   private async generateKeys(): Promise<void> {
     mkdirSync(this.keysDir, { recursive: true });
 
-    const { privateKey, publicKey } = await generateKeyPair(ALG);
+    const { privateKey, publicKey } = await generateKeyPair(ALG, { extractable: true });
     this.privateKey = privateKey;
     this.publicKey = publicKey;
 
@@ -184,8 +184,8 @@ export class SidecarManager implements Service {
     const privatePem = await Bun.file(this.privateKeyPath).text();
     const publicPem = await Bun.file(this.publicKeyPath).text();
 
-    this.privateKey = await importPKCS8(privatePem, ALG);
-    this.publicKey = await importSPKI(publicPem, ALG);
+    this.privateKey = await importPKCS8(privatePem, ALG, { extractable: true });
+    this.publicKey = await importSPKI(publicPem, ALG, { extractable: true });
   }
 
   // --------------- JWKS ---------------
@@ -393,6 +393,28 @@ export class SidecarManager implements Service {
     const sidecarId = (ws.data as any)?.sidecar_id as string;
     if (!sidecarId) return;
 
+    // Intercept registration messages before routing to connection
+    if (typeof message === 'string') {
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed.type === 'register') {
+          const record = this.getSidecar(sidecarId);
+          this.registerConnection({
+            id: sidecarId,
+            name: record?.name ?? parsed.hostname ?? sidecarId,
+            hostname: parsed.hostname ?? 'unknown',
+            os: parsed.os ?? 'unknown',
+            platform: parsed.platform ?? 'unknown',
+            capabilities: parsed.capabilities ?? [],
+            connectedAt: new Date(),
+          });
+          return;
+        }
+      } catch {
+        // Not JSON or not a register message — fall through to connection handler
+      }
+    }
+
     const connection = this.sidecarConnections.get(sidecarId);
     if (!connection) return;
 
@@ -400,6 +422,14 @@ export class SidecarManager implements Service {
       connection.handleBinary(message);
     } else {
       connection.handleMessage(message.toString());
+    }
+  }
+
+  /** Called when a pong is received from a sidecar */
+  handleSidecarPong(sidecarId: string): void {
+    const connection = this.sidecarConnections.get(sidecarId);
+    if (connection) {
+      connection.handlePong();
     }
   }
 

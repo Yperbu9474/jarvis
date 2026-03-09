@@ -255,6 +255,13 @@ export class WebSocketServer {
           }
         },
 
+        pong(ws) {
+          const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
+          if (sidecarId && self.sidecarManager) {
+            self.sidecarManager.handleSidecarPong(sidecarId);
+          }
+        },
+
         close(ws) {
           const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
           if (sidecarId && self.sidecarManager) {

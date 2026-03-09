@@ -3,7 +3,7 @@
  * J.A.R.V.I.S. CLI Entry Point
  *
  * Usage:
- *   jarvis start [--port N] [--foreground]  Start the daemon
+ *   jarvis start [--port N] [-d|--detach]   Start the daemon
  *   jarvis stop                             Stop the running daemon
  *   jarvis status                           Show daemon status
  *   jarvis onboard                          Interactive setup wizard
@@ -13,7 +13,8 @@
  */
 
 import { join } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, openSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { writePid, clearPid, isRunning, getLogPath } from '../src/daemon/pid.ts';
 import { c } from '../src/cli/helpers.ts';
 
@@ -50,7 +51,7 @@ ${c.bold('Commands:')}
 
 ${c.bold('Start options:')}
   --port <N>        Override daemon port (default: 3142)
-  --foreground      Run in foreground (don't daemonize)
+  -d, --detach      Run as background daemon
   --no-open         Don't auto-open dashboard in browser
 
 ${c.bold('Logs options:')}
@@ -58,8 +59,8 @@ ${c.bold('Logs options:')}
   -n, --lines <N>   Number of lines to show (default: 50)
 
 ${c.bold('Examples:')}
-  jarvis start                  Start daemon in background
-  jarvis start --foreground     Start in foreground (for debugging)
+  jarvis start                  Start in foreground
+  jarvis start -d               Start as background daemon
   jarvis start --port 8080      Start on custom port
   jarvis restart                Restart with same settings
   jarvis logs -f                Follow live log output
@@ -70,7 +71,7 @@ ${c.bold('Examples:')}
 }
 
 async function cmdStart(args: string[]): Promise<void> {
-  const foreground = args.includes('--foreground');
+  const detach = args.includes('--detach') || args.includes('-d');
   const noOpen = args.includes('--no-open');
 
   // Parse --port
@@ -92,7 +93,7 @@ async function cmdStart(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  if (foreground) {
+  if (!detach) {
     // Run in foreground — just import and call startDaemon
     writePid(process.pid);
     process.on('exit', () => clearPid());
@@ -112,13 +113,16 @@ async function cmdStart(args: string[]): Promise<void> {
     const logPath = getLogPath();
     const logFile = Bun.file(logPath);
 
-    const daemonArgs = [join(PACKAGE_ROOT, 'bin/jarvis.ts'), 'start', '--foreground', '--no-open'];
+    const daemonArgs = [join(PACKAGE_ROOT, 'bin/jarvis.ts'), 'start', '--no-open'];
     if (port) daemonArgs.push('--port', String(port));
 
-    const child = Bun.spawn(['bun', ...daemonArgs], {
-      stdio: ['ignore', logFile, logFile],
+    const logFd = openSync(logPath, 'a');
+    const child = spawn('bun', daemonArgs, {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
       env: { ...process.env },
     });
+    child.unref();
 
     // Poll for the daemon to write its PID (up to 10s)
     let runningPid: number | null = null;
