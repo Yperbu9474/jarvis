@@ -1,5 +1,11 @@
 import React, { useState } from "react";
 import { useApiData } from "../../hooks/useApi";
+import { SidecarConfigEditor } from "./SidecarConfigEditor";
+
+type UnavailableCapability = {
+  name: string;
+  reason: string;
+};
 
 type SidecarInfo = {
   id: string;
@@ -12,6 +18,7 @@ type SidecarInfo = {
   os?: string;
   platform?: string;
   capabilities?: string[];
+  unavailable_capabilities?: UnavailableCapability[];
 };
 
 export function SidecarPanel() {
@@ -20,6 +27,7 @@ export function SidecarPanel() {
   const [enrollResult, setEnrollResult] = useState<{ token: string; name: string } | null>(null);
   const [error, setError] = useState("");
   const [enrolling, setEnrolling] = useState(false);
+  const [configTarget, setConfigTarget] = useState<{ id: string; name: string } | null>(null);
 
   const handleEnroll = async () => {
     if (!enrollName.trim()) return;
@@ -130,27 +138,66 @@ export function SidecarPanel() {
                   {sc.capabilities && sc.capabilities.length > 0 && (
                     <span> · {sc.capabilities.join(", ")}</span>
                   )}
+                  {sc.unavailable_capabilities && sc.unavailable_capabilities.length > 0 && (
+                    <span>
+                      {" · "}
+                      {sc.unavailable_capabilities.map((u, i) => (
+                        <span key={u.name} title={u.reason} style={{ color: "var(--j-warning, #fa0)", cursor: "help" }}>
+                          {i > 0 ? ", " : ""}&#9888; {u.name}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   {sc.last_seen_at && (
                     <span> · Last seen {new Date(sc.last_seen_at).toLocaleString()}</span>
                   )}
                 </div>
               </div>
-              <button
-                onClick={() => handleRevoke(sc.id)}
-                style={{
-                  ...buttonStyle,
-                  fontSize: "11px",
-                  padding: "4px 10px",
-                  background: "transparent",
-                  color: "var(--j-error, #f44)",
-                  border: "1px solid var(--j-error, #f44)",
-                }}
-              >
-                Revoke
-              </button>
+              <div style={{ display: "flex", gap: "6px" }}>
+                {sc.connected && (
+                  <button
+                    onClick={() => setConfigTarget({ id: sc.id, name: sc.name })}
+                    style={{
+                      ...buttonStyle,
+                      fontSize: "11px",
+                      padding: "4px 10px",
+                      background: "transparent",
+                      color: "var(--j-accent)",
+                      border: "1px solid var(--j-accent)",
+                    }}
+                  >
+                    Configure
+                  </button>
+                )}
+                <button
+                  onClick={() => handleRevoke(sc.id)}
+                  style={{
+                    ...buttonStyle,
+                    fontSize: "11px",
+                    padding: "4px 10px",
+                    background: "transparent",
+                    color: "var(--j-error, #f44)",
+                    border: "1px solid var(--j-error, #f44)",
+                  }}
+                >
+                  Revoke
+                </button>
+              </div>
             </div>
           ))}
         </div>
+      )}
+
+      {/* Config editor modal */}
+      {configTarget && (
+        <SidecarConfigEditor
+          sidecarId={configTarget.id}
+          sidecarName={configTarget.name}
+          unavailableCapabilities={
+            sidecars?.find(s => s.id === configTarget.id)?.unavailable_capabilities ?? []
+          }
+          onClose={() => setConfigTarget(null)}
+        />
       )}
     </div>
   );

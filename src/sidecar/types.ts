@@ -15,6 +15,12 @@ export type SidecarCapability =
   | 'system_info'
   | 'awareness';
 
+/** A capability that is enabled in config but unavailable on the system */
+export interface UnavailableCapability {
+  name: SidecarCapability;
+  reason: string;
+}
+
 /** Sidecar status in the database */
 export type SidecarStatus = 'enrolled' | 'revoked';
 
@@ -59,6 +65,14 @@ export interface SidecarRegistration {
   os: string;
   platform: string;
   capabilities: SidecarCapability[];
+  unavailable_capabilities?: UnavailableCapability[];
+}
+
+/** Capabilities update message sent by sidecar when config changes */
+export interface SidecarCapabilitiesUpdate {
+  type: 'capabilities_update';
+  capabilities: SidecarCapability[];
+  unavailable_capabilities?: UnavailableCapability[];
 }
 
 /** A connected sidecar (runtime state, not persisted) */
@@ -69,7 +83,17 @@ export interface ConnectedSidecar {
   os: string;
   platform: string;
   capabilities: SidecarCapability[];
+  unavailableCapabilities: UnavailableCapability[];
   connectedAt: Date;
+}
+
+/** Sidecar config as returned by get_config RPC (token excluded) */
+export interface SidecarConfig {
+  capabilities: SidecarCapability[];
+  terminal: { blocked_commands: string[]; default_shell: string; timeout_ms: number };
+  filesystem: { blocked_paths: string[]; max_file_size_kb: number };
+  browser: { cdp_port: number; profile_dir: string };
+  awareness: { screen_interval_ms: number; window_interval_ms: number; min_change_threshold: number; stuck_threshold_ms: number };
 }
 
 /** Sidecar info returned by API (DB record + connection state) */
@@ -84,4 +108,5 @@ export interface SidecarInfo {
   os?: string;
   platform?: string;
   capabilities?: SidecarCapability[];
+  unavailable_capabilities?: UnavailableCapability[];
 }

@@ -60,11 +60,19 @@ type SidecarEvent struct {
 
 // SidecarRegistration is sent on connect.
 type SidecarRegistration struct {
-	Type         string              `json:"type"`
-	Hostname     string              `json:"hostname"`
-	OS           string              `json:"os"`
-	Platform     string              `json:"platform"`
-	Capabilities []SidecarCapability `json:"capabilities"`
+	Type                    string                  `json:"type"`
+	Hostname                string                  `json:"hostname"`
+	OS                      string                  `json:"os"`
+	Platform                string                  `json:"platform"`
+	Capabilities            []SidecarCapability     `json:"capabilities"`
+	UnavailableCapabilities []UnavailableCapability `json:"unavailable_capabilities,omitempty"`
+}
+
+// SidecarCapabilitiesUpdate is sent when config changes to sync capabilities with the brain.
+type SidecarCapabilitiesUpdate struct {
+	Type                    string                  `json:"type"`
+	Capabilities            []SidecarCapability     `json:"capabilities"`
+	UnavailableCapabilities []UnavailableCapability `json:"unavailable_capabilities,omitempty"`
 }
 
 // SidecarConfig is the YAML config file structure.

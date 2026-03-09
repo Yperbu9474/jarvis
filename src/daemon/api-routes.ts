@@ -1994,6 +1994,37 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
       },
     },
 
+    '/api/sidecars/:id/config': {
+      GET: async (req: Request) => {
+        try {
+          if (!ctx.sidecarManager) return error('Sidecar manager not available', 503);
+          const url = new URL(req.url);
+          const parts = url.pathname.split('/');
+          const id = parts[parts.length - 2]!;
+          if (!ctx.sidecarManager.isConnected(id)) {
+            return error('Sidecar is not connected', 409);
+          }
+          const result = await ctx.sidecarManager.dispatchRPC(id, 'get_config', {});
+          return json(result);
+        } catch (err) { return error(`${err}`, 500); }
+      },
+      PATCH: async (req: Request) => {
+        try {
+          if (!ctx.sidecarManager) return error('Sidecar manager not available', 503);
+          const url = new URL(req.url);
+          const parts = url.pathname.split('/');
+          const id = parts[parts.length - 2]!;
+          if (!ctx.sidecarManager.isConnected(id)) {
+            return error('Sidecar is not connected', 409);
+          }
+          const body = await req.json() as Record<string, unknown>;
+          delete body.token;
+          const result = await ctx.sidecarManager.dispatchRPC(id, 'update_config', body);
+          return json(result);
+        } catch (err) { return error(`${err}`, 500); }
+      },
+    },
+
     '/api/sidecars/:id': {
       GET: (req: Request) => {
         try {

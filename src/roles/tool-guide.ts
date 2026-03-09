@@ -15,8 +15,8 @@ export function buildToolGuide(hasSidecars: boolean): string {
   lines.push('# Tool Guide');
   lines.push('');
 
-  // --- Terminal & File Operations ---
-  lines.push('## Terminal & File Operations');
+  // --- Tools ---
+  lines.push('## Tools');
   lines.push('');
 
   if (hasSidecars) {
@@ -35,20 +35,41 @@ export function buildToolGuide(hasSidecars: boolean): string {
   lines.push('### read_file');
   lines.push('Read a file\'s contents as text (max 100KB).');
   lines.push('- `path` (required): File path');
-  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote read');
+  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote execution');
   lines.push('');
 
   lines.push('### write_file');
   lines.push('Write content to a file (creates or overwrites).');
   lines.push('- `path` (required): File path');
   lines.push('- `content` (required): Content to write');
-  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote write');
+  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote execution');
   lines.push('');
 
   lines.push('### list_directory');
   lines.push('List directory contents with types and sizes.');
   lines.push('- `path` (required): Directory path');
-  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote listing');
+  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote execution');
+  lines.push('');
+
+  lines.push('### get_clipboard');
+  lines.push('Read the clipboard contents.');
+  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote execution');
+  lines.push('');
+
+  lines.push('### set_clipboard');
+  lines.push('Write text to the clipboard.');
+  lines.push('- `content` (required): Text to write');
+  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote execution');
+  lines.push('');
+
+  lines.push('### capture_screen');
+  lines.push('Take a screenshot of the screen. Returns base64-encoded PNG.');
+  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote execution');
+  lines.push('');
+
+  lines.push('### get_system_info');
+  lines.push('Get system information (hostname, OS, architecture, CPU count).');
+  if (hasSidecars) lines.push('- `target`: Sidecar name or ID for remote execution');
   lines.push('');
 
   // --- Browser ---
@@ -92,7 +113,12 @@ export function buildToolGuide(hasSidecars: boolean): string {
     lines.push('Each sidecar advertises what it can do:');
     lines.push('- `terminal` — supports `run_command`');
     lines.push('- `filesystem` — supports `read_file`, `write_file`, `list_directory`');
-    lines.push('- `screenshot`, `clipboard`, `desktop`, `browser`, `system_info` — future use');
+    lines.push('- `clipboard` — supports `get_clipboard`, `set_clipboard`');
+    lines.push('- `screenshot` — supports `capture_screen`');
+    lines.push('- `system_info` — supports `get_system_info`');
+    lines.push('- `desktop`, `browser` — supports desktop/browser automation tools');
+    lines.push('');
+    lines.push('If a capability is listed as unavailable (with a reason), do NOT try to work around it with `run_command`. The required system tool is missing and shell commands will fail the same way.');
     lines.push('');
     lines.push('### Example workflow');
     lines.push('User: "Check disk space on my server"');

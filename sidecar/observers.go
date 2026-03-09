@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"log"
-	"os/exec"
-	"runtime"
-	"strings"
 	"sync"
 	"time"
 )
@@ -90,13 +87,7 @@ func (o *ClipboardObserver) Run(ctx context.Context, send EventSender) {
 
 // readClipboardContent reads the system clipboard using platform commands.
 func readClipboardContent() (string, error) {
-	result, err := handleGetClipboard(nil)
-	if err != nil {
-		return "", err
-	}
-	m, _ := result.Result.(map[string]any)
-	content, _ := m["content"].(string)
-	return content, nil
+	return platformClipboardRead()
 }
 
 // ── Screen Observer ──────────────────────────────────────────────────
@@ -303,7 +294,7 @@ func (o *WindowObserver) Run(ctx context.Context, send EventSender) {
 }
 
 func (o *WindowObserver) poll(ctx context.Context, send EventSender) {
-	appName, windowTitle := getActiveWindowInfo()
+	appName, windowTitle := platformGetActiveWindow()
 
 	o.mu.Lock()
 	prevApp := o.lastApp
@@ -362,73 +353,11 @@ func (o *WindowObserver) poll(ctx context.Context, send EventSender) {
 	}
 }
 
-// getActiveWindowInfo returns (appName, windowTitle) using platform-specific commands.
-func getActiveWindowInfo() (string, string) {
-	switch runtime.GOOS {
-	case "linux":
-		return getActiveWindowLinux()
-	case "darwin":
-		return getActiveWindowMac()
-	default:
-		return getActiveWindowWindows()
-	}
-}
-
-func getActiveWindowLinux() (string, string) {
-	// Try xdotool
-	titleOut, err := exec.Command("xdotool", "getactivewindow", "getwindowname").Output()
-	if err != nil {
-		return "", ""
-	}
-	title := strings.TrimSpace(string(titleOut))
-
-	pidOut, err := exec.Command("xdotool", "getactivewindow", "getwindowpid").Output()
-	appName := ""
-	if err == nil {
-		pid := strings.TrimSpace(string(pidOut))
-		// Try to get process name from /proc
-		cmdOut, err := exec.Command("ps", "-p", pid, "-o", "comm=").Output()
-		if err == nil {
-			appName = strings.TrimSpace(string(cmdOut))
-		}
-	}
-	if appName == "" {
-		appName = title
-	}
-	return appName, title
-}
-
-func getActiveWindowMac() (string, string) {
-	out, err := exec.Command("osascript", "-e",
-		`tell application "System Events" to get name of first process whose frontmost is true`).Output()
-	if err != nil {
-		return "", ""
-	}
-	appName := strings.TrimSpace(string(out))
-
-	titleOut, err := exec.Command("osascript", "-e",
-		`tell application "System Events" to get title of front window of first process whose frontmost is true`).Output()
-	title := ""
-	if err == nil {
-		title = strings.TrimSpace(string(titleOut))
-	}
-	return appName, title
-}
-
-func getActiveWindowWindows() (string, string) {
-	out, err := exec.Command("powershell.exe", "-command",
-		`(Get-Process | Where-Object {$_.MainWindowHandle -ne 0} | Sort-Object -Property CPU -Descending | Select-Object -First 1).MainWindowTitle`).Output()
-	if err != nil {
-		return "", ""
-	}
-	title := strings.TrimSpace(string(out))
-	return title, title
-}
-
 // StartObservers launches all enabled observers as goroutines.
-func StartObservers(ctx context.Context, cfg *SidecarConfig, send EventSender) {
+// Only capabilities in availableCaps (those that passed preflight) are started.
+func StartObservers(ctx context.Context, cfg *SidecarConfig, availableCaps []SidecarCapability, send EventSender) {
 	caps := make(map[string]bool)
-	for _, c := range cfg.Capabilities {
+	for _, c := range availableCaps {
 		caps[c] = true
 	}
 

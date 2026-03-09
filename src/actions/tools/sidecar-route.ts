@@ -74,8 +74,14 @@ export async function routeToSidecar(
     return `Error: Sidecar "${sidecar.name}" is offline.`;
   }
 
+  // Check if capability is enabled but unavailable (missing system dependencies)
+  const unavail = sidecar.unavailable_capabilities?.find(u => u.name === requiredCapability);
+  if (unavail) {
+    return `Error: Sidecar "${sidecar.name}" has "${requiredCapability}" enabled but it is unavailable: ${unavail.reason}. Do NOT retry.`;
+  }
+
   if (sidecar.capabilities && !sidecar.capabilities.includes(requiredCapability)) {
-    return `Error: Sidecar "${sidecar.name}" does not support "${requiredCapability}". Capabilities: ${sidecar.capabilities.join(', ')}`;
+    return `Error: Sidecar "${sidecar.name}" does not have the "${requiredCapability}" capability enabled. Available capabilities: ${sidecar.capabilities.join(', ')}. Do NOT retry — ask the user to enable it in the sidecar's config if needed.`;
   }
 
   try {
@@ -88,6 +94,12 @@ export async function routeToSidecar(
     return typeof result === 'string' ? result : JSON.stringify(result, null, 2);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+
+    // METHOD_NOT_FOUND means the capability is disabled — tell the LLM not to retry
+    if (msg.includes('METHOD_NOT_FOUND')) {
+      return `Error [${sidecar.name}]: Method "${method}" is not available. The "${requiredCapability}" capability is not enabled on this sidecar. Do NOT retry this call — ask the user to enable the capability in the sidecar's config if needed.`;
+    }
+
     return `Error [${sidecar.name}]: ${msg}`;
   }
 }

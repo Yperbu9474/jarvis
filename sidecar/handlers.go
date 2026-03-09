@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-func NewHandlerRegistry(cfg *SidecarConfig) map[string]RPCHandler {
+func NewHandlerRegistry(cfg *SidecarConfig, availableCaps []SidecarCapability, onReloaded func()) map[string]RPCHandler {
 	caps := make(map[string]bool)
-	for _, c := range cfg.Capabilities {
+	for _, c := range availableCaps {
 		caps[c] = true
 	}
 
@@ -38,6 +38,10 @@ func NewHandlerRegistry(cfg *SidecarConfig) map[string]RPCHandler {
 	if caps[CapSystemInfo] {
 		registry["get_system_info"] = handleGetSystemInfo
 	}
+
+	// Administrative handlers — not gated by capability
+	registry["get_config"] = makeGetConfigHandler(cfg)
+	registry["update_config"] = makeUpdateConfigHandler(cfg, onReloaded)
 
 	return registry
 }
@@ -75,13 +79,14 @@ func makeRunCommandHandler(cfg *SidecarConfig) RPCHandler {
 		defer cancel()
 
 		shell := cfg.Terminal.DefaultShell
+		if shell == "" {
+			shell = platformDefaultShell()
+		}
 		var cmd *exec.Cmd
-		if shell != "" {
-			cmd = exec.CommandContext(ctx, shell, "-c", command)
-		} else if runtime.GOOS == "windows" {
-			cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+		if shell == "cmd.exe" {
+			cmd = exec.CommandContext(ctx, shell, "/C", command)
 		} else {
-			cmd = exec.CommandContext(ctx, "sh", "-c", command)
+			cmd = exec.CommandContext(ctx, shell, "-c", command)
 		}
 		cmd.Dir = cwd
 
@@ -219,17 +224,7 @@ func runCmd(name string, args []string, input string) (string, error) {
 }
 
 func handleGetClipboard(params map[string]any) (*RPCResult, error) {
-	var content string
-	var err error
-
-	switch runtime.GOOS {
-	case "darwin":
-		content, err = runCmd("pbpaste", nil, "")
-	case "windows":
-		content, err = runCmd("powershell", []string{"-command", "Get-Clipboard"}, "")
-	default:
-		content, err = runCmd("xclip", []string{"-selection", "clipboard", "-o"}, "")
-	}
+	content, err := platformClipboardRead()
 	if err != nil {
 		return nil, err
 	}
@@ -242,17 +237,7 @@ func handleSetClipboard(params map[string]any) (*RPCResult, error) {
 		return nil, fmt.Errorf("missing required parameter: content")
 	}
 
-	var err error
-	switch runtime.GOOS {
-	case "darwin":
-		_, err = runCmd("pbcopy", nil, content)
-	case "windows":
-		escaped := strings.ReplaceAll(content, "'", "''")
-		_, err = runCmd("powershell", []string{"-command", fmt.Sprintf("Set-Clipboard -Value '%s'", escaped)}, "")
-	default:
-		_, err = runCmd("xclip", []string{"-selection", "clipboard"}, content)
-	}
-	if err != nil {
+	if err := platformClipboardWrite(content); err != nil {
 		return nil, err
 	}
 	return &RPCResult{Result: map[string]any{"success": true}}, nil
@@ -264,30 +249,7 @@ func handleCaptureScreen(params map[string]any) (*RPCResult, error) {
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("jarvis-screenshot-%d.png", time.Now().UnixMilli()))
 	defer os.Remove(tmpFile)
 
-	var err error
-	switch runtime.GOOS {
-	case "darwin":
-		_, err = runCmd("screencapture", []string{"-x", tmpFile}, "")
-	case "windows":
-		psScript := fmt.Sprintf(
-			`Add-Type -AssemblyName System.Windows.Forms; `+
-				`[System.Windows.Forms.Screen]::PrimaryScreen | ForEach-Object { `+
-				`$bmp = New-Object System.Drawing.Bitmap($_.Bounds.Width, $_.Bounds.Height); `+
-				`$g = [System.Drawing.Graphics]::FromImage($bmp); `+
-				`$g.CopyFromScreen($_.Bounds.Location, [System.Drawing.Point]::Empty, $_.Bounds.Size); `+
-				`$bmp.Save('%s') }`, tmpFile)
-		_, err = runCmd("powershell", []string{"-command", psScript}, "")
-	default:
-		// Try scrot, then import, then gnome-screenshot
-		_, err = runCmd("scrot", []string{tmpFile}, "")
-		if err != nil {
-			_, err = runCmd("import", []string{"-window", "root", tmpFile}, "")
-			if err != nil {
-				_, err = runCmd("gnome-screenshot", []string{"-f", tmpFile}, "")
-			}
-		}
-	}
-	if err != nil {
+	if err := platformCaptureScreen(tmpFile); err != nil {
 		return nil, fmt.Errorf("screenshot capture failed: %w", err)
 	}
 
@@ -304,6 +266,125 @@ func handleCaptureScreen(params map[string]any) (*RPCResult, error) {
 			Data:     base64.StdEncoding.EncodeToString(data),
 		},
 	}, nil
+}
+
+// --- Config Management ---
+
+func makeGetConfigHandler(cfg *SidecarConfig) RPCHandler {
+	return func(params map[string]any) (*RPCResult, error) {
+		return &RPCResult{Result: map[string]any{
+			"capabilities": cfg.Capabilities,
+			"terminal": map[string]any{
+				"blocked_commands": cfg.Terminal.BlockedCommands,
+				"default_shell":   cfg.Terminal.DefaultShell,
+				"timeout_ms":      cfg.Terminal.TimeoutMs,
+			},
+			"filesystem": map[string]any{
+				"blocked_paths":    cfg.Filesystem.BlockedPaths,
+				"max_file_size_kb": cfg.Filesystem.MaxFileSizeKB,
+			},
+			"browser": map[string]any{
+				"cdp_port":    cfg.Browser.CDPPort,
+				"profile_dir": cfg.Browser.ProfileDir,
+			},
+			"awareness": map[string]any{
+				"screen_interval_ms":   cfg.Awareness.ScreenIntervalMs,
+				"window_interval_ms":   cfg.Awareness.WindowIntervalMs,
+				"min_change_threshold": cfg.Awareness.MinChangeThreshold,
+				"stuck_threshold_ms":   cfg.Awareness.StuckThresholdMs,
+			},
+		}}, nil
+	}
+}
+
+func makeUpdateConfigHandler(cfg *SidecarConfig, onReloaded func()) RPCHandler {
+	getConfig := makeGetConfigHandler(cfg)
+
+	return func(params map[string]any) (*RPCResult, error) {
+		// Update capabilities
+		if caps, ok := params["capabilities"].([]any); ok {
+			newCaps := make([]SidecarCapability, 0, len(caps))
+			for _, c := range caps {
+				if s, ok := c.(string); ok {
+					newCaps = append(newCaps, s)
+				}
+			}
+			cfg.Capabilities = newCaps
+		}
+
+		// Update terminal
+		if terminal, ok := params["terminal"].(map[string]any); ok {
+			if v, ok := terminal["timeout_ms"].(float64); ok {
+				cfg.Terminal.TimeoutMs = int(v)
+			}
+			if v, ok := terminal["default_shell"].(string); ok {
+				cfg.Terminal.DefaultShell = v
+			}
+			if v, ok := terminal["blocked_commands"].([]any); ok {
+				cmds := make([]string, 0, len(v))
+				for _, c := range v {
+					if s, ok := c.(string); ok {
+						cmds = append(cmds, s)
+					}
+				}
+				cfg.Terminal.BlockedCommands = cmds
+			}
+		}
+
+		// Update filesystem
+		if fs, ok := params["filesystem"].(map[string]any); ok {
+			if v, ok := fs["max_file_size_kb"].(float64); ok {
+				cfg.Filesystem.MaxFileSizeKB = int(v)
+			}
+			if v, ok := fs["blocked_paths"].([]any); ok {
+				paths := make([]string, 0, len(v))
+				for _, p := range v {
+					if s, ok := p.(string); ok {
+						paths = append(paths, s)
+					}
+				}
+				cfg.Filesystem.BlockedPaths = paths
+			}
+		}
+
+		// Update browser
+		if browser, ok := params["browser"].(map[string]any); ok {
+			if v, ok := browser["cdp_port"].(float64); ok {
+				cfg.Browser.CDPPort = int(v)
+			}
+			if v, ok := browser["profile_dir"].(string); ok {
+				cfg.Browser.ProfileDir = v
+			}
+		}
+
+		// Update awareness
+		if awareness, ok := params["awareness"].(map[string]any); ok {
+			if v, ok := awareness["screen_interval_ms"].(float64); ok {
+				cfg.Awareness.ScreenIntervalMs = int(v)
+			}
+			if v, ok := awareness["window_interval_ms"].(float64); ok {
+				cfg.Awareness.WindowIntervalMs = int(v)
+			}
+			if v, ok := awareness["min_change_threshold"].(float64); ok {
+				cfg.Awareness.MinChangeThreshold = v
+			}
+			if v, ok := awareness["stuck_threshold_ms"].(float64); ok {
+				cfg.Awareness.StuckThresholdMs = int(v)
+			}
+		}
+
+		// Persist to disk
+		if err := SaveConfig(cfg); err != nil {
+			return nil, fmt.Errorf("failed to save config: %w", err)
+		}
+
+		if onReloaded != nil {
+			onReloaded()
+		}
+
+		// Return updated config
+		return getConfig(params)
+	}
 }
 
 // --- System Info ---

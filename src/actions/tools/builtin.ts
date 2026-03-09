@@ -5,13 +5,17 @@
  * run_command, read_file, write_file, list_directory
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { execSync } from 'node:child_process';
+import { hostname, platform, arch, cpus, version } from 'node:os';
 import { TerminalExecutor } from '../terminal/executor.ts';
 import { BrowserController, type PageSnapshot } from '../browser/session.ts';
 import type { ToolDefinition, ToolResult } from './registry.ts';
 import type { LLMTool } from '../../llm/provider.ts';
 import { routeToSidecar } from './sidecar-route.ts';
+import { listSidecarsTool } from './sidecar-list.ts';
+import { DESKTOP_TOOLS } from './desktop.ts';
 
 const terminal = new TerminalExecutor({ timeout: 30000 });
 
@@ -248,6 +252,165 @@ export const listDirectoryTool: ToolDefinition = {
     }
 
     return lines.join('\n');
+  },
+};
+
+// --- Clipboard / Screenshot / System Info helpers ---
+
+function localClipboardRead(): string {
+  const os = platform();
+  if (os === 'darwin') {
+    return execSync('pbpaste', { encoding: 'utf-8' });
+  } else if (os === 'win32') {
+    return execSync('powershell -command Get-Clipboard', { encoding: 'utf-8' }).trimEnd();
+  } else {
+    try {
+      return execSync('xclip -selection clipboard -o', { encoding: 'utf-8' });
+    } catch {
+      return execSync('xsel --clipboard --output', { encoding: 'utf-8' });
+    }
+  }
+}
+
+function localClipboardWrite(content: string): void {
+  const os = platform();
+  if (os === 'darwin') {
+    execSync('pbcopy', { input: content, encoding: 'utf-8' });
+  } else if (os === 'win32') {
+    execSync('powershell -command Set-Clipboard', { input: content, encoding: 'utf-8' });
+  } else {
+    try {
+      execSync('xclip -selection clipboard', { input: content, encoding: 'utf-8' });
+    } catch {
+      execSync('xsel --clipboard --input', { input: content, encoding: 'utf-8' });
+    }
+  }
+}
+
+function localCaptureScreen(): string {
+  const os = platform();
+  const tmp = `/tmp/jarvis-screenshot-${Date.now()}.png`;
+  if (os === 'darwin') {
+    execSync(`screencapture -x ${tmp}`);
+  } else if (os === 'win32') {
+    execSync(`powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | ForEach-Object { $bmp = New-Object System.Drawing.Bitmap($_.Bounds.Width, $_.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($_.Bounds.Location, [System.Drawing.Point]::Empty, $_.Bounds.Size); $bmp.Save('${tmp}') }"`);
+  } else {
+    try {
+      execSync(`scrot ${tmp}`);
+    } catch {
+      execSync(`import -window root ${tmp}`);
+    }
+  }
+  const data = readFileSync(tmp);
+  unlinkSync(tmp);
+  return data.toString('base64');
+}
+
+function localSystemInfo(): Record<string, unknown> {
+  return {
+    hostname: hostname(),
+    os: platform(),
+    arch: arch(),
+    cpus: cpus().length,
+    node_version: version(),
+  };
+}
+
+// --- Clipboard / Screenshot / System Info tools ---
+
+export const getClipboardTool: ToolDefinition = {
+  name: 'get_clipboard',
+  description: 'Read the clipboard contents. Optionally specify a "target" sidecar name/ID to read from a remote machine instead of locally.',
+  category: 'general',
+  parameters: {
+    target: {
+      type: 'string',
+      description: 'Sidecar name or ID for remote execution (omit for local)',
+      required: false,
+    },
+  },
+  execute: async (params) => {
+    const target = params.target as string | undefined;
+    if (target) return routeToSidecar(target, 'get_clipboard', {}, 'clipboard');
+    if (isNoLocalTools()) return LOCAL_DISABLED_MSG;
+    try {
+      const content = localClipboardRead();
+      return content || '[clipboard is empty]';
+    } catch (err) {
+      return `Error reading clipboard: ${err instanceof Error ? err.message : err}`;
+    }
+  },
+};
+
+export const setClipboardTool: ToolDefinition = {
+  name: 'set_clipboard',
+  description: 'Write text to the clipboard. Optionally specify a "target" sidecar name/ID to write to a remote machine instead of locally.',
+  category: 'general',
+  parameters: {
+    content: {
+      type: 'string',
+      description: 'The text to write to the clipboard',
+      required: true,
+    },
+    target: {
+      type: 'string',
+      description: 'Sidecar name or ID for remote execution (omit for local)',
+      required: false,
+    },
+  },
+  execute: async (params) => {
+    const target = params.target as string | undefined;
+    if (target) return routeToSidecar(target, 'set_clipboard', { content: params.content }, 'clipboard');
+    if (isNoLocalTools()) return LOCAL_DISABLED_MSG;
+    try {
+      localClipboardWrite(params.content as string);
+      return 'Clipboard updated.';
+    } catch (err) {
+      return `Error writing clipboard: ${err instanceof Error ? err.message : err}`;
+    }
+  },
+};
+
+export const captureScreenTool: ToolDefinition = {
+  name: 'capture_screen',
+  description: 'Take a screenshot of the screen. Optionally specify a "target" sidecar name/ID to capture a remote machine instead of locally.',
+  category: 'general',
+  parameters: {
+    target: {
+      type: 'string',
+      description: 'Sidecar name or ID for remote execution (omit for local)',
+      required: false,
+    },
+  },
+  execute: async (params) => {
+    const target = params.target as string | undefined;
+    if (target) return routeToSidecar(target, 'capture_screen', {}, 'screenshot');
+    if (isNoLocalTools()) return LOCAL_DISABLED_MSG;
+    try {
+      const base64 = localCaptureScreen();
+      return JSON.stringify({ type: 'inline', mime_type: 'image/png', data: base64 });
+    } catch (err) {
+      return `Error capturing screen: ${err instanceof Error ? err.message : err}`;
+    }
+  },
+};
+
+export const getSystemInfoTool: ToolDefinition = {
+  name: 'get_system_info',
+  description: 'Get system information (hostname, OS, architecture, CPU count). Optionally specify a "target" sidecar name/ID to query a remote machine instead of locally.',
+  category: 'general',
+  parameters: {
+    target: {
+      type: 'string',
+      description: 'Sidecar name or ID for remote execution (omit for local)',
+      required: false,
+    },
+  },
+  execute: async (params) => {
+    const target = params.target as string | undefined;
+    if (target) return routeToSidecar(target, 'get_system_info', {}, 'system_info');
+    if (isNoLocalTools()) return LOCAL_DISABLED_MSG;
+    return JSON.stringify(localSystemInfo(), null, 2);
   },
 };
 
@@ -543,17 +706,18 @@ export const NON_BROWSER_TOOLS: ToolDefinition[] = [
   readFileTool,
   writeFileTool,
   listDirectoryTool,
+  getClipboardTool,
+  setClipboardTool,
+  captureScreenTool,
+  getSystemInfoTool,
+  listSidecarsTool,
 ];
-
-import { DESKTOP_TOOLS } from './desktop.ts';
-import { listSidecarsTool } from './sidecar-list.ts';
 
 /**
  * All built-in tools.
  */
 export const BUILTIN_TOOLS: ToolDefinition[] = [
   ...NON_BROWSER_TOOLS,
-  listSidecarsTool,
   browserNavigateTool,
   browserSnapshotTool,
   browserClickTool,

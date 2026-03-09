@@ -16,6 +16,8 @@ import type {
   SidecarInfo,
   SidecarTokenClaims,
   ConnectedSidecar,
+  SidecarCapability,
+  UnavailableCapability,
 } from './types.ts';
 import type { RPCRequest, RPCTimeouts, SidecarEvent, RPCResultPayload, RPCErrorPayload, RPCProgressPayload } from './protocol.ts';
 import { DEFAULT_RPC_TIMEOUTS } from './protocol.ts';
@@ -335,6 +337,21 @@ export class SidecarManager implements Service {
     }
   }
 
+  /** Update capabilities for a connected sidecar (called on config reload) */
+  updateCapabilities(sidecarId: string, capabilities: SidecarCapability[], unavailableCapabilities: UnavailableCapability[] = []): void {
+    const conn = this.connected.get(sidecarId);
+    if (conn) {
+      conn.capabilities = capabilities;
+      conn.unavailableCapabilities = unavailableCapabilities;
+    }
+    const db = getDb();
+    db.run('UPDATE sidecars SET capabilities = ? WHERE id = ?', [JSON.stringify(capabilities), sidecarId]);
+    console.log(`[SidecarManager] Capabilities updated for ${sidecarId}: ${capabilities.join(', ')}`);
+    if (unavailableCapabilities.length > 0) {
+      console.log(`[SidecarManager] Unavailable: ${unavailableCapabilities.map(u => u.name).join(', ')}`);
+    }
+  }
+
   /** Get all currently connected sidecars */
   getConnectedSidecars(): ConnectedSidecar[] {
     return Array.from(this.connected.values());
@@ -406,8 +423,13 @@ export class SidecarManager implements Service {
             os: parsed.os ?? 'unknown',
             platform: parsed.platform ?? 'unknown',
             capabilities: parsed.capabilities ?? [],
+            unavailableCapabilities: parsed.unavailable_capabilities ?? [],
             connectedAt: new Date(),
           });
+          return;
+        }
+        if (parsed.type === 'capabilities_update') {
+          this.updateCapabilities(sidecarId, parsed.capabilities ?? [], parsed.unavailable_capabilities ?? []);
           return;
         }
       } catch {
@@ -503,6 +525,7 @@ export class SidecarManager implements Service {
       os: conn?.os ?? record.os ?? undefined,
       platform: conn?.platform ?? record.platform ?? undefined,
       capabilities: conn?.capabilities ?? parsedCapabilities,
+      unavailable_capabilities: conn?.unavailableCapabilities,
     };
   }
 }

@@ -46,7 +46,12 @@ export const listSidecarsTool: ToolDefinition = {
       const host = s.hostname ?? 'unknown';
       const os = s.os ?? 'unknown';
       const lastSeen = s.last_seen_at ?? 'never';
-      return `[${status}] ${s.name} (${s.id})\n  Host: ${host} | OS: ${os} | Capabilities: ${caps} | Last seen: ${lastSeen}`;
+      let line = `[${status}] ${s.name} (${s.id})\n  Host: ${host} | OS: ${os} | Capabilities: ${caps} | Last seen: ${lastSeen}`;
+      if (s.unavailable_capabilities?.length) {
+        const unavailLines = s.unavailable_capabilities.map(u => `    - ${u.name}: ${u.reason}`);
+        line += `\n  Unavailable (missing deps):\n${unavailLines.join('\n')}`;
+      }
+      return line;
     }).join('\n\n');
   },
 };

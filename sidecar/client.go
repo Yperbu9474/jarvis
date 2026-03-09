@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"nhooyr.io/websocket"
@@ -19,12 +20,19 @@ const (
 )
 
 type SidecarClient struct {
-	config         *SidecarConfig
-	claims         *SidecarTokenClaims
-	handlers       map[string]RPCHandler
-	conn           *websocket.Conn
-	reconnectDelay time.Duration
-	stopped        bool
+	config          *SidecarConfig
+	claims          *SidecarTokenClaims
+	handlers        map[string]RPCHandler
+	conn            *websocket.Conn
+	reconnectDelay  time.Duration
+	stopped         bool
+	availableCaps   []SidecarCapability
+	unavailableCaps []UnavailableCapability
+
+	obsCancel context.CancelFunc // cancel function for running observers
+	obsCtx    context.Context    // parent context (from connectAndServe's ctx)
+	sendFn    EventSender        // event sender for observers
+	mu        sync.Mutex         // protects handlers/obsCancel during reload
 }
 
 func NewSidecarClient(config *SidecarConfig) (*SidecarClient, error) {
@@ -33,12 +41,14 @@ func NewSidecarClient(config *SidecarConfig) (*SidecarClient, error) {
 		return nil, fmt.Errorf("decode token: %w", err)
 	}
 
-	return &SidecarClient{
+	client := &SidecarClient{
 		config:         config,
 		claims:         claims,
-		handlers:       NewHandlerRegistry(config),
 		reconnectDelay: minReconnectDelay,
-	}, nil
+	}
+	client.runPreflight()
+	client.handlers = NewHandlerRegistry(config, client.availableCaps, client.reloadConfig)
+	return client, nil
 }
 
 func (c *SidecarClient) Start(ctx context.Context) {
@@ -69,6 +79,46 @@ func (c *SidecarClient) Stop() {
 	}
 }
 
+func (c *SidecarClient) reloadConfig() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Re-run preflight checks (capabilities or tools may have changed)
+	c.runPreflight()
+
+	// Rebuild handler registry (picks up capability changes)
+	c.handlers = NewHandlerRegistry(c.config, c.availableCaps, c.reloadConfig)
+
+	// Restart observers (picks up interval/threshold changes)
+	if c.obsCancel != nil {
+		c.obsCancel()
+	}
+	if c.obsCtx != nil && c.sendFn != nil {
+		newCtx, cancel := context.WithCancel(c.obsCtx)
+		c.obsCancel = cancel
+		StartObservers(newCtx, c.config, c.availableCaps, c.sendFn)
+	}
+
+	// Send capabilities update so the brain updates its capabilities list
+	if c.obsCtx != nil {
+		if err := c.sendCapabilitiesUpdate(c.obsCtx); err != nil {
+			log.Printf("[sidecar] Failed to send capabilities update after config reload: %v", err)
+		}
+	}
+
+	log.Println("[sidecar] Config reloaded: handlers rebuilt, observers restarted")
+}
+
+func (c *SidecarClient) runPreflight() {
+	c.availableCaps, c.unavailableCaps = CheckCapabilities(c.config)
+	if len(c.unavailableCaps) > 0 {
+		for _, u := range c.unavailableCaps {
+			log.Printf("[sidecar] Capability %q unavailable: %s", u.Name, u.Reason)
+		}
+	}
+	log.Printf("[sidecar] Available capabilities: %v", c.availableCaps)
+}
+
 func (c *SidecarClient) connectAndServe(ctx context.Context) error {
 	url := fmt.Sprintf("%s?token=%s", c.claims.Brain, c.config.Token)
 	log.Printf("[sidecar] Connecting to %s...", c.claims.Brain)
@@ -91,9 +141,18 @@ func (c *SidecarClient) connectAndServe(ctx context.Context) error {
 	// Start observers (clipboard, etc.) — cancelled when connection drops
 	obsCtx, obsCancel := context.WithCancel(ctx)
 	defer obsCancel()
-	StartObservers(obsCtx, c.config, func(ctx context.Context, event SidecarEvent) error {
+
+	sendFn := func(ctx context.Context, event SidecarEvent) error {
 		return c.sendJSON(ctx, event)
-	})
+	}
+
+	c.mu.Lock()
+	c.obsCtx = ctx // store parent context so reloadConfig can create fresh children
+	c.obsCancel = obsCancel
+	c.sendFn = sendFn
+	c.mu.Unlock()
+
+	StartObservers(obsCtx, c.config, c.availableCaps, sendFn)
 
 	return c.readLoop(ctx)
 }
@@ -101,13 +160,24 @@ func (c *SidecarClient) connectAndServe(ctx context.Context) error {
 func (c *SidecarClient) sendRegistration(ctx context.Context) error {
 	hostname, _ := os.Hostname()
 	msg := SidecarRegistration{
-		Type:         "register",
-		Hostname:     hostname,
-		OS:           runtime.GOOS,
-		Platform:     runtime.GOARCH,
-		Capabilities: c.config.Capabilities,
+		Type:                    "register",
+		Hostname:                hostname,
+		OS:                      runtime.GOOS,
+		Platform:                runtime.GOARCH,
+		Capabilities:            c.availableCaps,
+		UnavailableCapabilities: c.unavailableCaps,
 	}
 	log.Printf("[sidecar] Identified as %s (%s/%s)", msg.Hostname, msg.OS, msg.Platform)
+	return c.sendJSON(ctx, msg)
+}
+
+func (c *SidecarClient) sendCapabilitiesUpdate(ctx context.Context) error {
+	msg := SidecarCapabilitiesUpdate{
+		Type:                    "capabilities_update",
+		Capabilities:            c.availableCaps,
+		UnavailableCapabilities: c.unavailableCaps,
+	}
+	log.Printf("[sidecar] Sending capabilities update: %v", c.availableCaps)
 	return c.sendJSON(ctx, msg)
 }
 
@@ -129,7 +199,9 @@ func (c *SidecarClient) readLoop(ctx context.Context) error {
 
 		log.Printf("[sidecar] RPC %s: %s", req.ID, req.Method)
 
+		c.mu.Lock()
 		handler, ok := c.handlers[req.Method]
+		c.mu.Unlock()
 		if !ok {
 			c.sendResult(ctx, req.ID, nil, &rpcError{Code: "METHOD_NOT_FOUND", Message: fmt.Sprintf("Unknown method: %s", req.Method)})
 			continue

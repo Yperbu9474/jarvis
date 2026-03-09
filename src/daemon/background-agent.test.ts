@@ -3,13 +3,18 @@ import { createBrowserTools, NON_BROWSER_TOOLS, BUILTIN_TOOLS } from '../actions
 import { BrowserController } from '../actions/browser/session.ts';
 
 describe('NON_BROWSER_TOOLS', () => {
-  test('contains 4 non-browser tools', () => {
-    expect(NON_BROWSER_TOOLS).toHaveLength(4);
+  test('contains 9 non-browser tools', () => {
+    expect(NON_BROWSER_TOOLS).toHaveLength(9);
     const names = NON_BROWSER_TOOLS.map(t => t.name);
     expect(names).toContain('run_command');
     expect(names).toContain('read_file');
     expect(names).toContain('write_file');
     expect(names).toContain('list_directory');
+    expect(names).toContain('list_sidecars');
+    expect(names).toContain('get_clipboard');
+    expect(names).toContain('set_clipboard');
+    expect(names).toContain('capture_screen');
+    expect(names).toContain('get_system_info');
   });
 
   test('none have browser category', () => {
@@ -49,8 +54,8 @@ describe('createBrowserTools', () => {
     ]);
   });
 
-  test('BUILTIN_TOOLS = NON_BROWSER_TOOLS + list_sidecars + 7 browser + 8 desktop tools', () => {
-    expect(BUILTIN_TOOLS).toHaveLength(NON_BROWSER_TOOLS.length + 1 + 7 + 8);
+  test('BUILTIN_TOOLS = NON_BROWSER_TOOLS + 7 browser + 8 desktop tools', () => {
+    expect(BUILTIN_TOOLS).toHaveLength(NON_BROWSER_TOOLS.length + 7 + 8);
   });
 });
 
