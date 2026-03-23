@@ -115,6 +115,7 @@ export type ApiContext = {
   autoSuggest?: import('../workflows/auto-suggest.ts').WorkflowAutoSuggest;
   goalService?: import('../goals/service.ts').GoalService;
   sidecarManager?: import('../sidecar/manager.ts').SidecarManager;
+  siteBuilderService?: import('../sites/service.ts').SiteBuilderService;
 };
 
 // CORS headers — scoped to the dashboard origin, not wildcard
@@ -2286,6 +2287,254 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
           if (!revoked) return error('Sidecar not found or already revoked', 404);
           return json({ success: true });
         } catch (err) { return error(`${err}`); }
+      },
+    },
+
+    // --- Site Builder ---
+    '/api/sites/templates': {
+      GET: () => {
+        const { TEMPLATES } = require('../sites/templates.ts');
+        return json(TEMPLATES);
+      },
+    },
+
+    '/api/sites/projects': {
+      GET: async () => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const projects = await ctx.siteBuilderService.listProjectsWithStatus();
+        return json(projects);
+      },
+      POST: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        try {
+          const body = await req.json() as { name: string; template: string };
+          if (!body.name || !body.template) return error('name and template are required');
+          const project = await ctx.siteBuilderService.projectManager.createProject(body.name, body.template);
+          return json(project, 201);
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id': {
+      GET: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const project = await ctx.siteBuilderService.getProjectWithStatus(id);
+        if (!project) return error('Project not found', 404);
+        return json(project);
+      },
+      DELETE: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        try {
+          await ctx.siteBuilderService.stopProject(id);
+          await ctx.siteBuilderService.projectManager.deleteProject(id);
+          return json({ ok: true });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/start': {
+      POST: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        try {
+          const project = await ctx.siteBuilderService.startProject(id);
+          return json(project);
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/stop': {
+      POST: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        try {
+          await ctx.siteBuilderService.stopProject(id);
+          return json({ ok: true });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/logs': {
+      GET: (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const limit = parseInt(getSearchParams(req).get('limit') ?? '100', 10);
+        const logs = ctx.siteBuilderService.devServerManager.getLogs(id, limit);
+        return json({ logs });
+      },
+    },
+
+    '/api/sites/projects/:id/files': {
+      GET: (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        try {
+          const tree = ctx.siteBuilderService.projectManager.getFileTree(id);
+          return json(tree);
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/file': {
+      GET: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const filePath = getSearchParams(req).get('path');
+        if (!filePath) return error('path query parameter is required');
+        try {
+          const content = await ctx.siteBuilderService.projectManager.readFile(id, filePath);
+          return json({ path: filePath, content });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err), 404);
+        }
+      },
+      PUT: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        try {
+          const body = await req.json() as { path: string; content: string };
+          if (!body.path || body.content === undefined) return error('path and content are required');
+          await ctx.siteBuilderService.projectManager.writeFile(id, body.path, body.content);
+
+          // Auto-commit if enabled
+          const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+          if (projectPath) {
+            await ctx.siteBuilderService.gitManager.autoCommit(projectPath, `Update ${body.path}`);
+          }
+
+          return json({ ok: true });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    // --- Site Builder: Git ---
+    '/api/sites/projects/:id/git/branches': {
+      GET: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+        if (!projectPath) return error('Project not found', 404);
+        try {
+          const branches = await ctx.siteBuilderService.gitManager.getBranches(projectPath);
+          return json(branches);
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+      POST: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+        if (!projectPath) return error('Project not found', 404);
+        try {
+          const body = await req.json() as { name: string };
+          if (!body.name) return error('name is required');
+          await ctx.siteBuilderService.gitManager.createBranch(projectPath, body.name);
+          return json({ ok: true, branch: body.name });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/git/branch': {
+      POST: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+        if (!projectPath) return error('Project not found', 404);
+        try {
+          const body = await req.json() as { name: string };
+          if (!body.name) return error('name is required');
+          await ctx.siteBuilderService.gitManager.switchBranch(projectPath, body.name);
+          return json({ ok: true, branch: body.name });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/git/log': {
+      GET: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+        if (!projectPath) return error('Project not found', 404);
+        const limit = parseInt(getSearchParams(req).get('limit') ?? '50', 10);
+        try {
+          const commits = await ctx.siteBuilderService.gitManager.getLog(projectPath, limit);
+          return json(commits);
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/git/diff': {
+      GET: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+        if (!projectPath) return error('Project not found', 404);
+        try {
+          const diff = await ctx.siteBuilderService.gitManager.getDiff(projectPath);
+          return json({ diff });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/git/commit': {
+      POST: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+        if (!projectPath) return error('Project not found', 404);
+        try {
+          const body = await req.json() as { message: string };
+          if (!body.message) return error('message is required');
+          const commit = await ctx.siteBuilderService.gitManager.autoCommit(projectPath, body.message);
+          if (!commit) return json({ ok: false, message: 'Nothing to commit' });
+          return json({ ok: true, commit });
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/sites/projects/:id/git/merge': {
+      POST: async (req: Request) => {
+        if (!ctx.siteBuilderService) return error('Site builder not available', 503);
+        const id = new URL(req.url).pathname.split('/')[4]!;
+        const projectPath = ctx.siteBuilderService.projectManager.getProjectPath(id);
+        if (!projectPath) return error('Project not found', 404);
+        try {
+          const body = await req.json() as { branch: string; strategy?: 'merge' | 'rebase' };
+          if (!body.branch) return error('branch is required');
+
+          const result = body.strategy === 'rebase'
+            ? await ctx.siteBuilderService.gitManager.rebase(projectPath, body.branch)
+            : await ctx.siteBuilderService.gitManager.merge(projectPath, body.branch);
+
+          return json(result);
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
       },
     },
 

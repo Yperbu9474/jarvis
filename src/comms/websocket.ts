@@ -13,7 +13,8 @@ export type WSMessage = {
   type: 'chat' | 'command' | 'status' | 'stream' | 'error' | 'notification'
       | 'tts_start' | 'tts_end' | 'voice_start' | 'voice_end'
       | 'workflow_event'
-      | 'goal_event';
+      | 'goal_event'
+      | 'site_event';
   payload: unknown;
   id?: string;
   priority?: 'urgent' | 'normal' | 'low';
@@ -83,6 +84,12 @@ export class WebSocketServer {
     this.sidecarManager = manager;
   }
 
+  private siteProxy: import('../sites/proxy.ts').SiteProxy | null = null;
+
+  setSiteProxy(proxy: import('../sites/proxy.ts').SiteProxy): void {
+    this.siteProxy = proxy;
+  }
+
   /**
    * Register API route handlers (method-based).
    * Example: setApiRoutes({ '/api/health': { GET: handler } })
@@ -117,7 +124,7 @@ export class WebSocketServer {
     this.startTime = Date.now();
     const self = this;
 
-    this.server = Bun.serve<{ sidecar_id?: string }>({
+    this.server = Bun.serve<{ sidecar_id?: string; proxy_target?: string; _proxyUpstream?: WebSocket }>({
       port: this.port,
       idleTimeout: 30, // seconds — prevent timeout during heavy processing (OCR, PowerShell)
 
@@ -190,6 +197,27 @@ export class WebSocketServer {
             clients: self.clients.size,
             timestamp: Date.now(),
           });
+        }
+
+        // 3b. Site builder proxy — intercept before API route matching
+        if (self.siteProxy && pathname.startsWith('/api/sites/') && pathname.includes('/proxy')) {
+          const match = self.siteProxy.matchProxy(pathname);
+          if (match) {
+            // WebSocket upgrade for HMR — bridge to dev server
+            if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+              const targetUrl = self.siteProxy.getWebSocketTarget(match.projectId, match.subPath);
+              if (!targetUrl) {
+                return new Response('Dev server not running', { status: 502 });
+              }
+              const success = server.upgrade(req, {
+                data: { proxy_target: targetUrl },
+              });
+              if (success) return undefined;
+              return new Response('WebSocket upgrade failed', { status: 500 });
+            }
+            // HTTP proxy
+            return self.siteProxy.proxyHttp(req, match.projectId, match.subPath);
+          }
         }
 
         // 4. API routes
@@ -290,6 +318,17 @@ export class WebSocketServer {
 
       websocket: {
         open(ws) {
+          // HMR proxy WebSocket — bridge to dev server
+          const proxyTarget = (ws.data as any)?.proxy_target as string | undefined;
+          if (proxyTarget) {
+            const upstream = new WebSocket(proxyTarget);
+            (ws.data as any)._proxyUpstream = upstream;
+            upstream.onmessage = (e) => { try { ws.send(e.data); } catch { /* client gone */ } };
+            upstream.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
+            upstream.onclose = () => { try { ws.close(); } catch { /* ignore */ } };
+            return;
+          }
+
           const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
           if (sidecarId && self.sidecarManager) {
             self.sidecarManager.handleSidecarConnect(ws, sidecarId);
@@ -302,6 +341,15 @@ export class WebSocketServer {
         },
 
         async message(ws, message) {
+          // HMR proxy — forward to upstream dev server
+          const proxyUpstream = (ws.data as any)?._proxyUpstream as WebSocket | undefined;
+          if (proxyUpstream) {
+            if (proxyUpstream.readyState === WebSocket.OPEN) {
+              proxyUpstream.send(message);
+            }
+            return;
+          }
+
           const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
           if (sidecarId && self.sidecarManager) {
             self.sidecarManager.handleSidecarMessage(ws, message);
@@ -352,6 +400,13 @@ export class WebSocketServer {
         },
 
         close(ws) {
+          // HMR proxy cleanup
+          const proxyUpstream = (ws.data as any)?._proxyUpstream as WebSocket | undefined;
+          if (proxyUpstream) {
+            try { proxyUpstream.close(); } catch { /* ignore */ }
+            return;
+          }
+
           const sidecarId = (ws.data as any)?.sidecar_id as string | undefined;
           if (sidecarId && self.sidecarManager) {
             self.sidecarManager.handleSidecarDisconnect(sidecarId);

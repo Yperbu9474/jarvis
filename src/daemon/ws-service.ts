@@ -40,6 +40,7 @@ export class WebSocketService implements Service {
   private ttsProvider: TTSProvider | null = null;
   private sttProvider: STTProvider | null = null;
   private voiceSessions = new Map<ServerWebSocket<unknown>, VoiceSession>();
+  private siteBuilderService: import('../sites/service.ts').SiteBuilderService | null = null;
 
   constructor(port: number, agentService: AgentService) {
     this.port = port;
@@ -58,6 +59,13 @@ export class WebSocketService implements Service {
         console.error('[WSService] Failed to update task assignee:', err);
       }
     });
+  }
+
+  /**
+   * Set the site builder service for project-scoped chat.
+   */
+  setSiteBuilderService(svc: import('../sites/service.ts').SiteBuilderService): void {
+    this.siteBuilderService = svc;
   }
 
   /**
@@ -423,6 +431,15 @@ export class WebSocketService implements Service {
     this.wsServer.broadcast(message);
   }
 
+  broadcastSiteEvent(event: { type: string; projectId: string; data: Record<string, unknown>; timestamp: number }): void {
+    const message: WSMessage = {
+      type: 'site_event',
+      payload: event,
+      timestamp: event.timestamp,
+    };
+    this.wsServer.broadcast(message);
+  }
+
   broadcastApprovalUpdate(request: ApprovalRequest): void {
     const message: WSMessage = {
       type: 'notification',
@@ -480,8 +497,9 @@ export class WebSocketService implements Service {
    * Auto-creates a task for non-trivial messages so the task board tracks agent work.
    */
   private async handleChat(msg: WSMessage, ws?: ServerWebSocket<unknown>): Promise<WSMessage | void> {
-    const payload = msg.payload as { text?: string; channel?: string };
+    const payload = msg.payload as { text?: string; channel?: string; projectId?: string };
     const text = payload?.text;
+    const projectId = payload?.projectId ?? null;
 
     if (!text) {
       return {
@@ -494,6 +512,22 @@ export class WebSocketService implements Service {
 
     const channel = payload.channel ?? 'websocket';
     const requestId = msg.id ?? crypto.randomUUID();
+
+    // If project-scoped, prepend project context to the message
+    let effectiveText = text;
+    if (projectId && this.siteBuilderService) {
+      const project = await this.siteBuilderService.getProjectWithStatus(projectId);
+      if (project) {
+        effectiveText = `[Site Builder Context: Project "${project.name}" (${project.framework}) at ${project.path}, branch: ${project.gitBranch ?? 'main'}, dev server: ${project.status}.
+
+IMPORTANT RULES:
+- Use site_read_file, site_write_file, site_list_files, site_run_command, site_git_commit tools with project_id="${projectId}".
+- Do NOT use regular read_file, write_file, or run_command — always use the site_* variants.
+- Do NOT start dev servers via site_run_command. The dev server is managed by the dashboard (make dev runs automatically).
+- Changes are auto-committed after this conversation turn completes.
+- For the "bun-react" framework: the server uses Bun.serve() with HTML imports (import from "./index.html"). Run with "bun --hot index.ts", NOT vite or webpack.]\n\n${text}`;
+      }
+    }
 
     // Auto-create a task for non-trivial messages
     const isTrivial = text.trim().length < 10;
@@ -520,7 +554,7 @@ export class WebSocketService implements Service {
       const conversation = getOrCreateConversation(channel);
       addMessage(conversation.id, { role: 'user', content: text });
 
-      const { stream, onComplete } = this.agentService.streamMessage(text, channel);
+      const { stream, onComplete } = this.agentService.streamMessage(effectiveText, channel);
 
       // Set up streaming TTS: speak sentences as they arrive
       const ttsActive = !!(this.ttsProvider && ws);
@@ -623,6 +657,27 @@ export class WebSocketService implements Service {
       onComplete(fullText).catch((err) =>
         console.error('[WSService] onComplete error:', err)
       );
+
+      // Auto-commit site builder changes after chat turn
+      if (projectId && this.siteBuilderService) {
+        try {
+          const projectPath = this.siteBuilderService.projectManager.getProjectPath(projectId);
+          if (projectPath) {
+            const commitMsg = text.length > 60 ? text.slice(0, 57) + '...' : text;
+            const commit = await this.siteBuilderService.gitManager.autoCommit(projectPath, commitMsg);
+            if (commit) {
+              this.broadcastSiteEvent({
+                type: 'git_commit',
+                projectId,
+                data: { commit },
+                timestamp: Date.now(),
+              });
+            }
+          }
+        } catch (err) {
+          console.error('[WSService] Site builder auto-commit error:', err);
+        }
+      }
 
       // Don't return a direct response — StreamRelay already broadcast everything
       return undefined;
