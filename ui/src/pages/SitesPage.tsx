@@ -102,6 +102,18 @@ export default function SitesPage({ sendMessage, isConnected, messages }: Props)
     setRightTab("editor");
   }, []);
 
+  // Delete a project
+  const deleteProject = useCallback(async (projectId: string) => {
+    try {
+      await api(`/api/sites/projects/${projectId}`, { method: "DELETE" });
+      setOpenTabs((prev) => prev.filter((p) => p.id !== projectId));
+      if (activeProjectId === projectId) setActiveProjectId(null);
+      refetchProjects();
+    } catch (err) {
+      console.error("Failed to delete project:", err);
+    }
+  }, [activeProjectId, refetchProjects]);
+
   // Handle new project creation
   const handleProjectCreated = useCallback((project: Project) => {
     setShowNewProject(false);
@@ -155,28 +167,64 @@ export default function SitesPage({ sendMessage, isConnected, messages }: Props)
             {projects && projects.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {projects.map((p) => (
-                  <button
+                  <div
                     key={p.id}
-                    onClick={() => openProject(p)}
                     style={{
-                      display: "flex", alignItems: "center", gap: "12px",
-                      padding: "12px 16px", background: "var(--j-surface)",
-                      border: "1px solid var(--j-border)", borderRadius: "8px",
-                      color: "var(--j-text)", cursor: "pointer", textAlign: "left",
-                      width: "100%",
+                      display: "flex", alignItems: "center", gap: "8px",
                     }}
                   >
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.status === "running" ? "var(--j-success)" : "var(--j-text-muted)", flexShrink: 0 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: "13px", fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ fontSize: "11px", color: "var(--j-text-muted)", marginTop: 2 }}>
-                        {p.framework} {p.gitBranch ? `· ${p.gitBranch}` : ""} {p.gitDirty ? "· modified" : ""}
+                    <button
+                      onClick={() => openProject(p)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "12px",
+                        padding: "12px 16px", background: "var(--j-surface)",
+                        border: "1px solid var(--j-border)", borderRadius: "8px",
+                        color: "var(--j-text)", cursor: "pointer", textAlign: "left",
+                        flex: 1,
+                      }}
+                    >
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: p.status === "running" ? "var(--j-success)" : "var(--j-text-muted)", flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: "13px", fontWeight: 600 }}>{p.name}</div>
+                        <div style={{ fontSize: "11px", color: "var(--j-text-muted)", marginTop: 2 }}>
+                          {p.framework} {p.gitBranch ? `· ${p.gitBranch}` : ""} {p.gitDirty ? "· modified" : ""}
+                        </div>
                       </div>
-                    </div>
-                    <span style={{ fontSize: "11px", color: "var(--j-text-muted)" }}>
-                      {new Date(p.lastOpenedAt).toLocaleDateString()}
-                    </span>
-                  </button>
+                      <span style={{ fontSize: "11px", color: "var(--j-text-muted)" }}>
+                        {new Date(p.lastOpenedAt).toLocaleDateString()}
+                      </span>
+                    </button>
+                    <button
+                      title="Delete project"
+                      onClick={() => {
+                        if (confirm(`Delete project "${p.name}"? This will remove all project files.`)) {
+                          deleteProject(p.id);
+                        }
+                      }}
+                      style={{
+                        padding: "8px",
+                        background: "none",
+                        border: "1px solid transparent",
+                        borderRadius: "6px",
+                        color: "var(--j-text-muted)",
+                        cursor: "pointer",
+                        fontSize: "14px",
+                        lineHeight: 1,
+                        flexShrink: 0,
+                        transition: "color 0.15s, border-color 0.15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = "var(--j-error, #ff4d4f)";
+                        e.currentTarget.style.borderColor = "var(--j-error, #ff4d4f)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = "var(--j-text-muted)";
+                        e.currentTarget.style.borderColor = "transparent";
+                      }}
+                    >
+                      &#x2715;
+                    </button>
+                  </div>
                 ))}
               </div>
             ) : (
