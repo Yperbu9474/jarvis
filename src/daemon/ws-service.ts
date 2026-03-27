@@ -440,6 +440,19 @@ export class WebSocketService implements Service {
     this.wsServer.broadcast(message);
   }
 
+  /**
+   * Format a FileEntry tree into a compact text listing.
+   */
+  private formatFileTree(entry: { name: string; path: string; type: 'file' | 'directory'; children?: { name: string; type: 'file' | 'directory' }[] }): string {
+    const lines: string[] = [];
+    if (entry.children) {
+      for (const child of entry.children) {
+        lines.push(child.type === 'directory' ? `${child.name}/` : child.name);
+      }
+    }
+    return lines.join('\n') + '\n';
+  }
+
   broadcastApprovalUpdate(request: ApprovalRequest): void {
     const message: WSMessage = {
       type: 'notification',
@@ -513,19 +526,31 @@ export class WebSocketService implements Service {
     const channel = payload.channel ?? 'websocket';
     const requestId = msg.id ?? crypto.randomUUID();
 
-    // If project-scoped, prepend project context to the message
-    let effectiveText = text;
+    // Build site builder system prompt context (injected into system prompt, not user message)
+    let siteContext: string | undefined;
     if (projectId && this.siteBuilderService) {
       const project = await this.siteBuilderService.getProjectWithStatus(projectId);
       if (project) {
-        effectiveText = `[Site Builder Context: Project "${project.name}" (${project.framework}) at ${project.path}, branch: ${project.gitBranch ?? 'main'}, dev server: ${project.status}.
+        let fileTreeText = '';
+        try {
+          const tree = this.siteBuilderService.projectManager.getFileTree(projectId, 1);
+          fileTreeText = this.formatFileTree(tree);
+        } catch { /* ignore */ }
 
-IMPORTANT RULES:
+        siteContext = `# Site Builder Context
+
+You are working on project "${project.name}" (${project.framework}).
+- Path: ${project.path}
+- Branch: ${project.gitBranch ?? 'main'}
+- Dev server: ${project.status}
+${fileTreeText ? `\n## Project Structure\n\`\`\`\n${fileTreeText}\`\`\`` : ''}
+
+## Rules
 - Use site_read_file, site_write_file, site_list_files, site_run_command, site_git_commit tools with project_id="${projectId}".
 - Do NOT use regular read_file, write_file, or run_command — always use the site_* variants.
 - Do NOT start dev servers via site_run_command. The dev server is managed by the dashboard (make dev runs automatically).
 - Changes are auto-committed after this conversation turn completes.
-- For the "bun-react" framework: the server uses Bun.serve() with HTML imports (import from "./index.html"). Run with "bun --hot index.ts", NOT vite or webpack.]\n\n${text}`;
+- For the "bun-react" framework: the server uses Bun.serve() with HTML imports (import from "./index.html"). Run with "bun --hot index.ts", NOT vite or webpack.`;
       }
     }
 
@@ -554,7 +579,7 @@ IMPORTANT RULES:
       const conversation = getOrCreateConversation(channel);
       addMessage(conversation.id, { role: 'user', content: text });
 
-      const { stream, onComplete } = this.agentService.streamMessage(effectiveText, channel);
+      const { stream, onComplete } = this.agentService.streamMessage(text, channel, siteContext);
 
       // Set up streaming TTS: speak sentences as they arrive
       const ttsActive = !!(this.ttsProvider && ws);
