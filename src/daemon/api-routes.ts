@@ -2298,6 +2298,16 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
       },
     },
 
+    '/api/sites/git/check': {
+      GET: async () => {
+        const { GitManager } = require('../sites/git-manager.ts');
+        const installed = await GitManager.isInstalled();
+        if (!installed) return json({ installed: false, authorName: null, authorEmail: null });
+        const author = await GitManager.getGlobalAuthor();
+        return json({ installed: true, authorName: author.name, authorEmail: author.email });
+      },
+    },
+
     '/api/sites/projects': {
       GET: async () => {
         if (!ctx.siteBuilderService) return error('Site builder not available', 503);
@@ -2307,9 +2317,9 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
       POST: async (req: Request) => {
         if (!ctx.siteBuilderService) return error('Site builder not available', 503);
         try {
-          const body = await req.json() as { name: string; template: string };
+          const body = await req.json() as { name: string; template: string; gitAuthor?: { name: string; email: string; global: boolean } };
           if (!body.name || !body.template) return error('name and template are required');
-          const project = await ctx.siteBuilderService.projectManager.createProject(body.name, body.template);
+          const project = await ctx.siteBuilderService.projectManager.createProject(body.name, body.template, body.gitAuthor);
           return json(project, 201);
         } catch (err) {
           return error(err instanceof Error ? err.message : String(err));

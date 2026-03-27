@@ -112,7 +112,7 @@ export class ProjectManager {
   /**
    * Create a new project from a template.
    */
-  async createProject(name: string, templateId: string): Promise<Project> {
+  async createProject(name: string, templateId: string, gitAuthor?: { name: string; email: string; global: boolean }): Promise<Project> {
     const id = this.sanitizeId(name);
     const projectPath = join(this.projectsDir, id);
 
@@ -172,7 +172,7 @@ export class ProjectManager {
     await installProc.exited;
 
     // Initialize git
-    await this.gitManager.init(projectPath);
+    await this.gitManager.init(projectPath, gitAuthor);
 
     console.log(`[SiteBuilder] Created project "${id}" with template "${templateId}"`);
 

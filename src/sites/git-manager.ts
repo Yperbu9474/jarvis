@@ -8,10 +8,50 @@ import type { GitCommit, GitBranch } from './types.ts';
 
 export class GitManager {
   /**
-   * Initialize a new git repo in the project directory.
+   * Check if git is installed on the system.
    */
-  async init(projectPath: string): Promise<void> {
+  static async isInstalled(): Promise<boolean> {
+    try {
+      const proc = Bun.spawn(['git', '--version'], { stdout: 'pipe', stderr: 'pipe' });
+      const stdout = await new Response(proc.stdout).text();
+      return (await proc.exited) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get the effective git author config (global/system level).
+   */
+  static async getGlobalAuthor(): Promise<{ name: string | null; email: string | null }> {
+    let name: string | null = null;
+    let email: string | null = null;
+    try {
+      const proc = Bun.spawn(['git', 'config', '--global', 'user.name'], { stdout: 'pipe', stderr: 'pipe' });
+      const out = await new Response(proc.stdout).text();
+      if ((await proc.exited) === 0) name = out.trim() || null;
+    } catch {}
+    try {
+      const proc = Bun.spawn(['git', 'config', '--global', 'user.email'], { stdout: 'pipe', stderr: 'pipe' });
+      const out = await new Response(proc.stdout).text();
+      if ((await proc.exited) === 0) email = out.trim() || null;
+    } catch {}
+    return { name, email };
+  }
+
+  /**
+   * Initialize a new git repo in the project directory.
+   * If author config is provided, sets it before the initial commit.
+   */
+  async init(projectPath: string, author?: { name: string; email: string; global: boolean }): Promise<void> {
     await this.run(projectPath, ['init']);
+
+    if (author) {
+      const scope = author.global ? '--global' : '--local';
+      await this.run(projectPath, ['config', scope, 'user.name', author.name]);
+      await this.run(projectPath, ['config', scope, 'user.email', author.email]);
+    }
+
     // Create initial commit
     await this.run(projectPath, ['add', '-A']);
     await this.run(projectPath, ['commit', '-m', 'Initial commit', '--allow-empty']);
