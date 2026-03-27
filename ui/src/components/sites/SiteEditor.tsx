@@ -191,10 +191,6 @@ export function SiteEditor({ projectId, filePath }: Props) {
     return <div style={emptyStyle}>Click a file in the tree to open it</div>;
   }
 
-  if (loading) {
-    return <div style={emptyStyle}>Loading...</div>;
-  }
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* File header */}
@@ -219,8 +215,9 @@ export function SiteEditor({ projectId, filePath }: Props) {
         </div>
       </div>
 
-      {/* CodeMirror container */}
-      <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />
+      {/* CodeMirror container - always rendered so ref stays mounted */}
+      <div ref={containerRef} style={{ flex: 1, overflow: "hidden", display: loading ? "none" : "block" }} />
+      {loading && <div style={{ ...emptyStyle, flex: 1 }}>Loading...</div>}
     </div>
   );
 }
