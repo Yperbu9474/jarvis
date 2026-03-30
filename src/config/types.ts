@@ -134,6 +134,8 @@ export type JarvisConfig = {
     port: number;
     data_dir: string;
     db_path: string;
+    /** Public dashboard URL used for websocket/CORS origin checks, e.g. https://jarvis.example.com */
+    public_url?: string;
     /** External domain for the brain (used in sidecar JWT tokens). Env: JARVIS_BRAIN_DOMAIN */
     brain_domain?: string;
   };
@@ -183,6 +185,7 @@ export const DEFAULT_CONFIG: JarvisConfig = {
     port: 3142,
     data_dir: '~/.jarvis',
     db_path: '~/.jarvis/jarvis.db',
+    public_url: '',
   },
   channels: {
     telegram: { enabled: false, bot_token: '', allowed_users: [] },
