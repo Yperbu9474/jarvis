@@ -147,6 +147,8 @@ export type JarvisConfig = {
   llm: {
     primary: string;  // provider name
     fallback: string[];
+    /** If true, LLM calls are only triggered by explicit user messages (disables autonomous/proactive loops). */
+    user_driven_only?: boolean;
     anthropic?: { api_key: string; model?: string };
     openai?: { api_key: string; model?: string };
     gemini?: { api_key: string; model?: string };
