@@ -102,18 +102,18 @@ export function UserProfilePanel() {
     }
   };
 
-  if (loading || !data) {
+  if (error && !data) {
     return (
       <div style={cardStyle}>
-        <span style={{ color: "var(--j-text-muted)", fontSize: "13px" }}>Loading user profile wizard...</span>
+        <span style={{ color: "var(--j-danger, #ff6b6b)", fontSize: "13px" }}>{error}</span>
       </div>
     );
   }
 
-  if (error) {
+  if (loading || !data) {
     return (
       <div style={cardStyle}>
-        <span style={{ color: "var(--j-danger, #ff6b6b)", fontSize: "13px" }}>{error}</span>
+        <span style={{ color: "var(--j-text-muted)", fontSize: "13px" }}>Loading user profile wizard...</span>
       </div>
     );
   }

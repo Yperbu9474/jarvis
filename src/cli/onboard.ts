@@ -6,7 +6,7 @@
  * All steps are skippable except LLM configuration.
  */
 
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
 import {
@@ -641,7 +641,7 @@ export async function runOnboard(): Promise<void> {
 
     if (userProfileAnswers && Object.keys(userProfileAnswers).length > 0) {
       try {
-        initDatabase(expandHome(config.daemon.db_path));
+        initDatabase(resolveOnboardDbPath(config));
         saveUserProfile(userProfileAnswers);
         printOk('User profile saved to the vault.');
       } catch (err) {
@@ -675,4 +675,10 @@ function expandHome(filepath: string): string {
     return join(homedir(), filepath.slice(2));
   }
   return filepath;
+}
+
+function resolveOnboardDbPath(config: JarvisConfig): string {
+  const dataDir = expandHome(config.daemon.data_dir);
+  const dbPath = expandHome(config.daemon.db_path);
+  return isAbsolute(dbPath) ? dbPath : join(dataDir, dbPath);
 }

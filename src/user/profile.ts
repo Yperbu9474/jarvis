@@ -207,9 +207,18 @@ export function formatUserProfileForPrompt(profile: UserProfileRecord | null): s
   for (const question of USER_PROFILE_QUESTIONS) {
     const answer = profile.answers[question.id]?.trim();
     if (!answer) continue;
-    lines.push(`- ${question.label}: ${answer}`);
+    lines.push(`- ${question.label}: |`);
+    lines.push(indentPromptValue(answer));
   }
 
   if (lines.length === 0) return undefined;
   return lines.join('\n');
+}
+
+function indentPromptValue(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => `    ${line}`)
+    .join('\n');
 }

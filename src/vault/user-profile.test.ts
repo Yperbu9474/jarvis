@@ -46,8 +46,24 @@ describe('Vault — User Profile', () => {
     expect(countAnsweredUserProfileQuestions(profile)).toBe(2);
 
     const prompt = formatUserProfileForPrompt(profile);
-    expect(prompt).toContain('Preferred Name: Alex');
-    expect(prompt).toContain('Communication Preferences: Be direct and concise.');
+    expect(prompt).toContain('Preferred Name: |');
+    expect(prompt).toContain('    Alex');
+    expect(prompt).toContain('Communication Preferences: |');
+    expect(prompt).toContain('    Be direct and concise.');
     expect(prompt).not.toContain('Pronouns');
+  });
+
+  test('prompt formatter indents multiline answers to keep them contained', () => {
+    initDatabase(':memory:');
+
+    const profile = saveUserProfile({
+      anything_else: 'Line one\n# not a heading\n- not a list item',
+    });
+
+    const prompt = formatUserProfileForPrompt(profile);
+    expect(prompt).toContain('Anything Else: |');
+    expect(prompt).toContain('    Line one');
+    expect(prompt).toContain('    # not a heading');
+    expect(prompt).toContain('    - not a list item');
   });
 });
