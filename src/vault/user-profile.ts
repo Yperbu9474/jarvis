@@ -12,6 +12,7 @@ import {
 } from '../user/profile.ts';
 
 export const USER_PROFILE_VAULT_SOURCE = 'user_profile';
+const USER_PROFILE_FOLLOWUP_STATE_KEY = 'user.profile.followup.v1';
 
 export function getUserProfile(): UserProfileRecord | null {
   const raw = getSetting(USER_PROFILE_SETTING_KEY);
@@ -58,6 +59,7 @@ export function saveUserProfile(input: Record<string, unknown>): UserProfileReco
 export function clearUserProfile(): void {
   deleteSetting(USER_PROFILE_SETTING_KEY);
   clearUserProfileKnowledge();
+  deleteSetting(USER_PROFILE_FOLLOWUP_STATE_KEY);
 }
 
 function syncUserProfileKnowledge(profile: UserProfileRecord): void {
