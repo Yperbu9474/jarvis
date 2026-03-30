@@ -89,10 +89,6 @@ function applyEnvOverrides(config: JarvisConfig): void {
     config.daemon.brain_domain = env.JARVIS_BRAIN_DOMAIN;
   }
 
-  if (env.JARVIS_PUBLIC_URL) {
-    config.daemon.public_url = env.JARVIS_PUBLIC_URL;
-  }
-
   if (env.JARVIS_AUTH_TOKEN) {
     if (!config.auth) config.auth = {};
     config.auth.token = env.JARVIS_AUTH_TOKEN;

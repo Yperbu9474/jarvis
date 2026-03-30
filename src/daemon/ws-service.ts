@@ -121,10 +121,6 @@ export class WebSocketService implements Service {
     this.wsServer.setAuthToken(token);
   }
 
-  setCorsOrigin(origin: string): void {
-    this.wsServer.setCorsOrigin(origin);
-  }
-
   async start(): Promise<void> {
     this._status = 'starting';
 
