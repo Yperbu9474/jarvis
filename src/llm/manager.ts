@@ -108,7 +108,7 @@ export class LLMManager {
             if (event.type === 'error') {
               hasError = true;
               // Retry on transient errors (overloaded, rate limit, server errors)
-              isRetryable = /overloaded|rate.limit|529|5\d\d|timeout/i.test(event.error);
+              isRetryable = this.isRetryableError(event.error);
               if (isRetryable && attempt < MAX_RETRIES_PER_PROVIDER) {
                 const delay = RETRY_BASE_MS * Math.pow(2, attempt);
                 console.log(`[LLMManager] ${providerName} stream error (${event.error}) — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES_PER_PROVIDER})`);
@@ -131,7 +131,7 @@ export class LLMManager {
           break; // Non-retryable error, try next provider
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          const isRetryable = /overloaded|rate.limit|529|5\d\d|timeout|ECONNRESET/i.test(errorMsg);
+          const isRetryable = this.isRetryableError(errorMsg);
           if (isRetryable && attempt < MAX_RETRIES_PER_PROVIDER) {
             const delay = RETRY_BASE_MS * Math.pow(2, attempt);
             console.log(`[LLMManager] ${providerName} stream failed (${errorMsg}) — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES_PER_PROVIDER})`);
@@ -149,5 +149,14 @@ export class LLMManager {
       type: 'error',
       error: `All providers failed:\n${errors.map(e => `  ${e.provider}: ${e.error}`).join('\n')}`,
     };
+  }
+
+  private isRetryableError(message: string): boolean {
+    // Request too large / TPM overflow are deterministic; retrying unchanged
+    // requests just delays the user response.
+    if (/request too large|tokens per minute|context length|too many tokens|413/i.test(message)) {
+      return false;
+    }
+    return /overloaded|rate.limit|529|5\d\d|timeout|ECONNRESET/i.test(message);
   }
 }

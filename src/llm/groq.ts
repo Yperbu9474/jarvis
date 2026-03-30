@@ -9,8 +9,9 @@ import type {
 } from './provider.ts';
 
 type GroqMessage = {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  tool_call_id?: string;
 };
 
 type GroqToolDef = {
@@ -81,6 +82,10 @@ export class GroqProvider implements LLMProvider {
   private apiKey: string;
   private defaultModel: string;
   private apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
+  private readonly maxRequestChars = 24000;
+  private readonly maxSystemChars = 8000;
+  private readonly maxMessageChars = 3000;
+  private readonly defaultMaxTokens = 512;
 
   constructor(apiKey: string, defaultModel = 'llama-3.3-70b-versatile') {
     this.apiKey = apiKey;
@@ -89,14 +94,15 @@ export class GroqProvider implements LLMProvider {
 
   async chat(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
     const { model = this.defaultModel, temperature, max_tokens, tools } = options;
+    const requestMessages = this.prepareMessages(messages);
 
     const body: Record<string, unknown> = {
       model,
-      messages: this.convertMessages(messages),
+      messages: requestMessages,
     };
 
     if (temperature !== undefined) body.temperature = temperature;
-    if (max_tokens !== undefined) body.max_tokens = max_tokens;
+    body.max_tokens = max_tokens ?? this.defaultMaxTokens;
     if (tools && tools.length > 0) {
       body.tools = this.convertTools(tools);
     }
@@ -121,15 +127,16 @@ export class GroqProvider implements LLMProvider {
 
   async *stream(messages: LLMMessage[], options: LLMOptions = {}): AsyncIterable<LLMStreamEvent> {
     const { model = this.defaultModel, temperature, max_tokens, tools } = options;
+    const requestMessages = this.prepareMessages(messages);
 
     const body: Record<string, unknown> = {
       model,
-      messages: this.convertMessages(messages),
+      messages: requestMessages,
       stream: true,
     };
 
     if (temperature !== undefined) body.temperature = temperature;
-    if (max_tokens !== undefined) body.max_tokens = max_tokens;
+    body.max_tokens = max_tokens ?? this.defaultMaxTokens;
     if (tools && tools.length > 0) {
       body.tools = this.convertTools(tools);
     }
@@ -279,10 +286,59 @@ export class GroqProvider implements LLMProvider {
   }
 
   private convertMessages(messages: LLMMessage[]): GroqMessage[] {
-    return messages.map(m => ({
-      role: m.role as 'system' | 'user' | 'assistant',
-      content: m.content as string,
+    return messages.map(m => {
+      const text = typeof m.content === 'string'
+        ? m.content
+        : m.content.map((b) => b.type === 'text' ? b.text : '[image]').join('\n');
+      return {
+        role: m.role as 'system' | 'user' | 'assistant' | 'tool',
+        content: text,
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+      };
+    });
+  }
+
+  /**
+   * Keep Groq requests within lower-tier TPM constraints by trimming long
+   * context while preserving the most recent conversational turns.
+   */
+  private prepareMessages(messages: LLMMessage[]): GroqMessage[] {
+    const converted = this.convertMessages(messages);
+    const system = converted.find((m) => m.role === 'system');
+    const nonSystem = converted.filter((m) => m.role !== 'system');
+
+    const normalizedSystem = system
+      ? {
+          ...system,
+          content: this.truncate(system.content, this.maxSystemChars),
+        }
+      : null;
+
+    // Prefer recent context for conversation quality.
+    const tail = nonSystem.slice(-20).map((m) => ({
+      ...m,
+      content: this.truncate(m.content, this.maxMessageChars),
     }));
+
+    const result: GroqMessage[] = [];
+    if (normalizedSystem) result.push(normalizedSystem);
+    result.push(...tail);
+
+    // Enforce global character budget by dropping oldest non-system messages.
+    let total = result.reduce((sum, m) => sum + m.content.length, 0);
+    while (total > this.maxRequestChars && result.length > (normalizedSystem ? 1 : 0)) {
+      const removeIndex = normalizedSystem ? 1 : 0;
+      total -= result[removeIndex]!.content.length;
+      result.splice(removeIndex, 1);
+    }
+
+    return result;
+  }
+
+  private truncate(value: string, maxChars: number): string {
+    if (value.length <= maxChars) return value;
+    const suffix = '\n\n[truncated for Groq token limit]';
+    return value.slice(0, Math.max(0, maxChars - suffix.length)) + suffix;
   }
 
   private convertTools(tools: LLMTool[]): GroqToolDef[] {
