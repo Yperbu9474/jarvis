@@ -68,7 +68,15 @@ export function UserProfilePanel() {
   }, [data]);
 
   const currentStep = steps[stepIndex];
-  const completionPct = data ? Math.round((data.answered_count / Math.max(data.total_questions, 1)) * 100) : 0;
+  const liveAnsweredCount = useMemo(() => {
+    if (!data) return 0;
+    return data.questions.filter((question) => {
+      const value = answers[question.id];
+      return typeof value === "string" && value.trim().length > 0;
+    }).length;
+  }, [answers, data]);
+  const answeredCount = editing ? liveAnsweredCount : data?.answered_count ?? 0;
+  const completionPct = data ? Math.round((answeredCount / Math.max(data.total_questions, 1)) * 100) : 0;
 
   const saveProfile = async () => {
     setSaving(true);
@@ -144,7 +152,7 @@ export function UserProfilePanel() {
         <div style={{ marginTop: "18px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "8px" }}>
             <span style={{ color: "var(--j-text-muted)" }}>Completion</span>
-            <span style={{ color: "var(--j-text)" }}>{data.answered_count}/{data.total_questions} answered</span>
+            <span style={{ color: "var(--j-text)" }}>{answeredCount}/{data.total_questions} answered</span>
           </div>
           <div style={{ height: "6px", borderRadius: "999px", background: "var(--j-bg)", overflow: "hidden" }}>
             <div style={{ width: `${completionPct}%`, height: "100%", background: "var(--j-accent)" }} />
