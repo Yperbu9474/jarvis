@@ -10,6 +10,7 @@ import { getSecret, setSecret, deleteSecret, hasSecret } from '../vault/keychain
 import type { JarvisConfig } from '../config/types.ts';
 import { AnthropicProvider } from '../llm/anthropic.ts';
 import { OpenAIProvider } from '../llm/openai.ts';
+import { GroqProvider } from '../llm/groq.ts';
 import { GeminiProvider } from '../llm/gemini.ts';
 import { OllamaProvider } from '../llm/ollama.ts';
 import { OpenRouterProvider } from '../llm/openrouter.ts';
@@ -19,6 +20,7 @@ import type { LLMManager } from '../llm/manager.ts';
 // Keychain key names
 const KEY_ANTHROPIC = 'llm.anthropic.api_key';
 const KEY_OPENAI = 'llm.openai.api_key';
+const KEY_GROQ = 'llm.groq.api_key';
 const KEY_GEMINI = 'llm.gemini.api_key';
 const KEY_OPENROUTER = 'llm.openrouter.api_key';
 
@@ -27,6 +29,7 @@ const SETTING_PRIMARY = 'llm.primary';
 const SETTING_FALLBACK = 'llm.fallback';
 const SETTING_ANTHROPIC_MODEL = 'llm.anthropic.model';
 const SETTING_OPENAI_MODEL = 'llm.openai.model';
+const SETTING_GROQ_MODEL = 'llm.groq.model';
 const SETTING_GEMINI_MODEL = 'llm.gemini.model';
 const SETTING_OLLAMA_MODEL = 'llm.ollama.model';
 const SETTING_OLLAMA_BASE_URL = 'llm.ollama.base_url';
@@ -37,6 +40,7 @@ export type LLMSettingsResponse = {
   fallback: string[];
   anthropic: { model: string; has_api_key: boolean } | null;
   openai: { model: string; has_api_key: boolean } | null;
+  groq: { model: string; has_api_key: boolean } | null;
   gemini: { model: string; has_api_key: boolean } | null;
   ollama: { base_url: string; model: string } | null;
   openrouter: { model: string; has_api_key: boolean } | null;
@@ -53,6 +57,7 @@ export function getLLMSettings(config: JarvisConfig): LLMSettingsResponse {
 
   const anthropicModel = getSetting(SETTING_ANTHROPIC_MODEL) ?? config.llm.anthropic?.model ?? 'claude-sonnet-4-6';
   const openaiModel = getSetting(SETTING_OPENAI_MODEL) ?? config.llm.openai?.model ?? 'gpt-5.4';
+  const groqModel = getSetting(SETTING_GROQ_MODEL) ?? config.llm.groq?.model ?? 'llama-3.3-70b-versatile';
   const geminiModel = getSetting(SETTING_GEMINI_MODEL) ?? config.llm.gemini?.model ?? 'gemini-3-flash-preview';
   const ollamaModel = getSetting(SETTING_OLLAMA_MODEL) ?? config.llm.ollama?.model ?? 'llama3';
   const ollamaBaseUrl = getSetting(SETTING_OLLAMA_BASE_URL) ?? config.llm.ollama?.base_url ?? 'http://localhost:11434';
@@ -61,6 +66,7 @@ export function getLLMSettings(config: JarvisConfig): LLMSettingsResponse {
 
   const hasAnthropicKey = hasSecret(KEY_ANTHROPIC) || !!config.llm.anthropic?.api_key;
   const hasOpenaiKey = hasSecret(KEY_OPENAI) || !!config.llm.openai?.api_key;
+  const hasGroqKey = hasSecret(KEY_GROQ) || !!config.llm.groq?.api_key;
   const hasGeminiKey = hasSecret(KEY_GEMINI) || !!config.llm.gemini?.api_key;
   const hasOpenrouterKey = hasSecret(KEY_OPENROUTER) || !!config.llm.openrouter?.api_key;
 
@@ -69,6 +75,7 @@ export function getLLMSettings(config: JarvisConfig): LLMSettingsResponse {
     fallback,
     anthropic: { model: anthropicModel, has_api_key: hasAnthropicKey },
     openai: { model: openaiModel, has_api_key: hasOpenaiKey },
+    groq: { model: groqModel, has_api_key: hasGroqKey },
     gemini: { model: geminiModel, has_api_key: hasGeminiKey },
     ollama: { base_url: ollamaBaseUrl, model: ollamaModel },
     openrouter: { model: openrouterModel, has_api_key: hasOpenrouterKey },
@@ -85,6 +92,7 @@ export function saveLLMSettings(
     fallback?: string[];
     anthropic?: { api_key?: string; model?: string };
     openai?: { api_key?: string; model?: string };
+    groq?: { api_key?: string; model?: string };
     gemini?: { api_key?: string; model?: string };
     ollama?: { base_url?: string; model?: string };
     openrouter?: { api_key?: string; model?: string };
@@ -127,6 +135,21 @@ export function saveLLMSettings(
       ...config.llm.openai,
       model: body.openai.model ?? config.llm.openai?.model,
       api_key: body.openai.api_key ?? getOpenAIApiKey(config) ?? '',
+    };
+  }
+
+  // Groq
+  if (body.groq) {
+    if (body.groq.model) {
+      setSetting(SETTING_GROQ_MODEL, body.groq.model);
+    }
+    if (body.groq.api_key) {
+      setSecret(KEY_GROQ, body.groq.api_key);
+    }
+    config.llm.groq = {
+      ...config.llm.groq,
+      model: body.groq.model ?? config.llm.groq?.model,
+      api_key: body.groq.api_key ?? getGroqApiKey(config) ?? '',
     };
   }
 
@@ -191,6 +214,13 @@ function getOpenAIApiKey(config: JarvisConfig): string | null {
 }
 
 /**
+ * Resolve the Groq API key: keychain > config.yaml > env var.
+ */
+function getGroqApiKey(config: JarvisConfig): string | null {
+  return getSecret(KEY_GROQ) ?? config.llm.groq?.api_key ?? null;
+}
+
+/**
  * Resolve the Gemini API key: keychain > config.yaml > env var.
  */
 function getGeminiApiKey(config: JarvisConfig): string | null {
@@ -239,6 +269,19 @@ export function mergeLLMSettingsIntoConfig(config: JarvisConfig): void {
         ? keychainOpenaiKey
         : (config.llm.openai?.api_key ?? ''),
       model: dbOpenaiModel ?? config.llm.openai?.model,
+    };
+  }
+
+  // Groq
+  const dbGroqModel = getSetting(SETTING_GROQ_MODEL);
+  const keychainGroqKey = getSecret(KEY_GROQ);
+  if (dbGroqModel || keychainGroqKey) {
+    config.llm.groq = {
+      ...config.llm.groq,
+      api_key: (!process.env.JARVIS_GROQ_KEY && keychainGroqKey)
+        ? keychainGroqKey
+        : (config.llm.groq?.api_key ?? ''),
+      model: dbGroqModel ?? config.llm.groq?.model,
     };
   }
 
@@ -298,6 +341,10 @@ export function hotReloadLLMProviders(config: JarvisConfig, llmManager: LLMManag
     providers.push(new OpenAIProvider(llm.openai.api_key, llm.openai.model));
     console.log('[LLM] Hot-reloaded OpenAI provider');
   }
+  if (llm.groq?.api_key) {
+    providers.push(new GroqProvider(llm.groq.api_key, llm.groq.model));
+    console.log('[LLM] Hot-reloaded Groq provider');
+  }
   if (llm.gemini?.api_key) {
     providers.push(new GeminiProvider(llm.gemini.api_key, llm.gemini.model));
     console.log('[LLM] Hot-reloaded Gemini provider');
@@ -340,6 +387,10 @@ export async function testLLMProvider(
       const key = opts.api_key || getSecret(KEY_OPENAI) || config.llm.openai?.api_key;
       if (!key) return { ok: false, error: 'API key required' };
       instance = new OpenAIProvider(key, opts.model ?? config.llm.openai?.model);
+    } else if (opts.provider === 'groq') {
+      const key = opts.api_key || getSecret(KEY_GROQ) || config.llm.groq?.api_key;
+      if (!key) return { ok: false, error: 'API key required' };
+      instance = new GroqProvider(key, opts.model ?? config.llm.groq?.model);
     } else if (opts.provider === 'gemini') {
       const key = opts.api_key || config.llm.gemini?.api_key;
       if (!key) return { ok: false, error: 'API key required' };

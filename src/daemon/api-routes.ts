@@ -84,6 +84,7 @@ const BLOCKED_MIME_TYPES = new Set([
 
 import type { WebSocketService } from './ws-service.ts';
 import type { ChannelService } from './channel-service.ts';
+import { getGoogleRedirectUri } from '../config/public-url.ts';
 
 import type { AwarenessService } from '../awareness/service.ts';
 import { readFileSync } from 'node:fs';
@@ -125,9 +126,9 @@ let CORS: Record<string, string> = {
 };
 
 /** Call once during init to set the correct CORS origin from config */
-export function setCorsOrigin(port: number, host = 'localhost') {
+export function setCorsOrigin(origin: string) {
   CORS = {
-    'Access-Control-Allow-Origin': `http://${host}:${port}`,
+    'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
@@ -584,6 +585,9 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
             fallback: config.llm.fallback,
             anthropic: config.llm.anthropic ? { model: config.llm.anthropic.model } : null,
             openai: config.llm.openai ? { model: config.llm.openai.model } : null,
+            groq: config.llm.groq ? { model: config.llm.groq.model } : null,
+            gemini: config.llm.gemini ? { model: config.llm.gemini.model } : null,
+            openrouter: config.llm.openrouter ? { model: config.llm.openrouter.model } : null,
             ollama: config.llm.ollama ?? null,
           },
           personality: config.personality,
@@ -908,7 +912,9 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
         try {
           // Lazy import to avoid circular deps
           const { GoogleAuth } = await import('../integrations/google-auth.ts');
-          const auth = new GoogleAuth(googleConfig.client_id, googleConfig.client_secret);
+          const auth = new GoogleAuth(googleConfig.client_id, googleConfig.client_secret, {
+            redirectUri: getGoogleRedirectUri(ctx.config),
+          });
           await auth.exchangeCode(code);
 
           return new Response(
@@ -944,7 +950,9 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
 
         try {
           const { GoogleAuth } = await import('../integrations/google-auth.ts');
-          const auth = new GoogleAuth(googleConfig!.client_id, googleConfig!.client_secret);
+          const auth = new GoogleAuth(googleConfig!.client_id, googleConfig!.client_secret, {
+            redirectUri: getGoogleRedirectUri(ctx.config),
+          });
           const authenticated = auth.isAuthenticated();
           const tokens = auth.loadTokens();
 
@@ -994,7 +1002,9 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
 
         try {
           const { GoogleAuth } = await import('../integrations/google-auth.ts');
-          const auth = new GoogleAuth(googleConfig.client_id, googleConfig.client_secret);
+          const auth = new GoogleAuth(googleConfig.client_id, googleConfig.client_secret, {
+            redirectUri: getGoogleRedirectUri(ctx.config),
+          });
           const scopes = [
             'https://www.googleapis.com/auth/gmail.readonly',
             'https://www.googleapis.com/auth/calendar.readonly',

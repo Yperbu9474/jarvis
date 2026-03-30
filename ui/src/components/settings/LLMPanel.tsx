@@ -6,6 +6,7 @@ type LLMConfig = {
   fallback: string[];
   anthropic: { model: string; has_api_key: boolean } | null;
   openai: { model: string; has_api_key: boolean } | null;
+  groq: { model: string; has_api_key: boolean } | null;
   gemini: { model: string; has_api_key: boolean } | null;
   ollama: { base_url: string; model: string } | null;
   openrouter: { model: string; has_api_key: boolean } | null;
@@ -31,6 +32,13 @@ const OPENAI_MODELS = [
   "gpt-4.1",
   "o3",
   "o4-mini",
+];
+
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "qwen/qwen3-32b",
+  "deepseek-r1-distill-llama-70b",
 ];
 
 const GEMINI_MODELS = [
@@ -67,11 +75,12 @@ const OPENROUTER_MODELS = [
   "mistralai/mistral-large",
 ];
 
-const PROVIDERS = ["anthropic", "openai", "gemini", "ollama", "openrouter"] as const;
+const PROVIDERS = ["anthropic", "openai", "groq", "gemini", "ollama", "openrouter"] as const;
 
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
+  groq: "Groq",
   gemini: "Gemini",
   ollama: "Ollama",
   openrouter: "OpenRouter",
@@ -93,6 +102,11 @@ export function LLMPanel() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiModel, setOpenaiModel] = useState("gpt-5.4");
   const [openaiCustomModel, setOpenaiCustomModel] = useState("");
+
+  // Groq
+  const [groqKey, setGroqKey] = useState("");
+  const [groqModel, setGroqModel] = useState("llama-3.3-70b-versatile");
+  const [groqCustomModel, setGroqCustomModel] = useState("");
 
   // Gemini
   const [geminiKey, setGeminiKey] = useState("");
@@ -139,6 +153,16 @@ export function LLMPanel() {
       } else {
         setOpenaiModel("custom");
         setOpenaiCustomModel(m);
+      }
+    }
+    if (config.groq) {
+      const m = config.groq.model;
+      if (GROQ_MODELS.includes(m)) {
+        setGroqModel(m);
+        setGroqCustomModel("");
+      } else {
+        setGroqModel("custom");
+        setGroqCustomModel(m);
       }
     }
     if (config.gemini) {
@@ -192,6 +216,10 @@ export function LLMPanel() {
           model: resolveModel(openaiModel, openaiCustomModel),
           ...(openaiKey ? { api_key: openaiKey } : {}),
         },
+        groq: {
+          model: resolveModel(groqModel, groqCustomModel),
+          ...(groqKey ? { api_key: groqKey } : {}),
+        },
         gemini: {
           model: resolveModel(geminiModel, geminiCustomModel),
           ...(geminiKey ? { api_key: geminiKey } : {}),
@@ -212,6 +240,7 @@ export function LLMPanel() {
       setMessage({ text: resp.message, type: "ok" });
       setAnthropicKey("");
       setOpenaiKey("");
+      setGroqKey("");
       setGeminiKey("");
       setOpenrouterKey("");
       refetch();
@@ -234,6 +263,9 @@ export function LLMPanel() {
       } else if (provider === "openai") {
         body.api_key = openaiKey || undefined;
         body.model = resolveModel(openaiModel, openaiCustomModel);
+      } else if (provider === "groq") {
+        body.api_key = groqKey || undefined;
+        body.model = resolveModel(groqModel, groqCustomModel);
       } else if (provider === "gemini") {
         body.api_key = geminiKey || undefined;
         body.model = resolveModel(geminiModel, geminiCustomModel);
@@ -370,6 +402,24 @@ export function LLMPanel() {
           testing={testing === "openai"}
           testResult={testResult.openai}
           onTest={() => handleTest("openai")}
+        />
+
+        {/* Groq */}
+        <ProviderSection
+          name="Groq"
+          provider="groq"
+          isPrimary={primary === "groq"}
+          hasKey={config.groq?.has_api_key ?? false}
+          apiKey={groqKey}
+          onApiKeyChange={setGroqKey}
+          model={groqModel}
+          customModel={groqCustomModel}
+          onModelChange={setGroqModel}
+          onCustomModelChange={setGroqCustomModel}
+          models={GROQ_MODELS}
+          testing={testing === "groq"}
+          testResult={testResult.groq}
+          onTest={() => handleTest("groq")}
         />
 
         {/* Gemini */}

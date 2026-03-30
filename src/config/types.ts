@@ -134,6 +134,8 @@ export type JarvisConfig = {
     port: number;
     data_dir: string;
     db_path: string;
+    /** Public base URL for dashboard/API (used for CORS + OAuth redirects). Env: JARVIS_PUBLIC_URL */
+    public_url?: string;
     /** External domain for the brain (used in sidecar JWT tokens). Env: JARVIS_BRAIN_DOMAIN */
     brain_domain?: string;
   };
@@ -149,6 +151,7 @@ export type JarvisConfig = {
     fallback: string[];
     anthropic?: { api_key: string; model?: string };
     openai?: { api_key: string; model?: string };
+    groq?: { api_key: string; model?: string };
     gemini?: { api_key: string; model?: string };
     ollama?: { base_url?: string; model?: string };
     openrouter?: { api_key: string; model?: string };
@@ -221,6 +224,10 @@ export const DEFAULT_CONFIG: JarvisConfig = {
     openai: {
       api_key: '',
       model: 'gpt-5.4',
+    },
+    groq: {
+      api_key: '',
+      model: 'llama-3.3-70b-versatile',
     },
     gemini: {
       api_key: '',

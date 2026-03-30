@@ -70,6 +70,11 @@ function applyEnvOverrides(config: JarvisConfig): void {
     config.llm.openai.api_key = env.JARVIS_OPENAI_KEY;
   }
 
+  if (env.JARVIS_GROQ_KEY) {
+    if (!config.llm.groq) config.llm.groq = { api_key: '', model: 'llama-3.3-70b-versatile' };
+    config.llm.groq.api_key = env.JARVIS_GROQ_KEY;
+  }
+
   if (env.JARVIS_OLLAMA_URL) {
     if (!config.llm.ollama) config.llm.ollama = { base_url: '', model: 'llama3' };
     config.llm.ollama.base_url = env.JARVIS_OLLAMA_URL;
@@ -82,6 +87,10 @@ function applyEnvOverrides(config: JarvisConfig): void {
 
   if (env.JARVIS_BRAIN_DOMAIN) {
     config.daemon.brain_domain = env.JARVIS_BRAIN_DOMAIN;
+  }
+
+  if (env.JARVIS_PUBLIC_URL) {
+    config.daemon.public_url = env.JARVIS_PUBLIC_URL;
   }
 
   if (env.JARVIS_AUTH_TOKEN) {

@@ -5,6 +5,10 @@ daemon:
   port: 3142
   data_dir: "~/.jarvis"
   db_path: "~/.jarvis/jarvis.db"
+  # Public URL used for browser-facing links/CORS/OAuth redirects (optional)
+  # public_url: "https://jarvis.verion.store"
+  # Optional explicit sidecar brain domain (host[:port], no scheme)
+  # brain_domain: "jarvis.verion.store"
 
 # Authentication — protects dashboard, API, and WebSocket.
 # If unset, the application is open (no auth).
@@ -30,6 +34,11 @@ llm:
   openai:
     api_key: "sk-..."
     model: "gpt-4o"
+
+  # Groq (OpenAI-compatible) configuration
+  # groq:
+  #   api_key: "gsk_..."
+  #   model: "llama-3.3-70b-versatile"
 
   # OpenRouter (access hundreds of models via single API key)
   # openrouter:

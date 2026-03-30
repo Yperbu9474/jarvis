@@ -71,6 +71,7 @@ export async function runOnboard(): Promise<void> {
   const provider = await askChoice('Choose your primary LLM provider:', [
     { label: 'Anthropic (Claude)', value: 'anthropic' as const, description: 'Best quality, recommended' },
     { label: 'OpenAI (GPT)', value: 'openai' as const, description: 'Good alternative' },
+    { label: 'Groq', value: 'groq' as const, description: 'Fast, OpenAI-compatible API' },
     { label: 'Google (Gemini)', value: 'gemini' as const, description: 'Google AI models' },
     { label: 'OpenRouter', value: 'openrouter' as const, description: 'Access hundreds of models via single API key' },
     { label: 'Ollama (Local)', value: 'ollama' as const, description: 'Free, runs locally' },
@@ -145,6 +146,36 @@ export async function runOnboard(): Promise<void> {
     const modelChoice = await askChoice('Choose a model:', openaiModels, isPreset ? currentModel : 'custom');
     const model = modelChoice === 'custom' ? await ask('Enter model name', currentModel) : modelChoice;
     if (config.llm.openai) config.llm.openai.model = model;
+
+  } else if (provider === 'groq') {
+    const existing = config.llm.groq?.api_key;
+    if (existing && existing.length > 5) {
+      const keep = await askYesNo(`API key found (${existing.slice(0, 10)}...). Keep it?`, true);
+      if (!keep) {
+        const key = await askSecret('Enter your Groq API key');
+        if (key) config.llm.groq = { ...config.llm.groq, api_key: key };
+      }
+    } else {
+      const key = await askSecret('Enter your Groq API key (from console.groq.com)');
+      if (key) {
+        config.llm.groq = { ...config.llm.groq, api_key: key };
+      } else {
+        printWarn('No API key set. JARVIS won\'t work without one.');
+      }
+    }
+
+    const currentModel = config.llm.groq?.model ?? 'llama-3.3-70b-versatile';
+    const groqModels = [
+      { label: 'Llama 3.3 70B Versatile', value: 'llama-3.3-70b-versatile', description: 'Balanced capability and speed' },
+      { label: 'Llama 3.1 8B Instant', value: 'llama-3.1-8b-instant', description: 'Fast and low latency' },
+      { label: 'Qwen 3 32B', value: 'qwen/qwen3-32b', description: 'Strong general-purpose model' },
+      { label: 'DeepSeek R1 Distill 70B', value: 'deepseek-r1-distill-llama-70b', description: 'Reasoning-focused model' },
+      { label: 'Custom', value: 'custom', description: 'Enter model name manually' },
+    ];
+    const isPreset = groqModels.some(m => m.value === currentModel);
+    const modelChoice = await askChoice('Choose a model:', groqModels, isPreset ? currentModel : 'custom');
+    const model = modelChoice === 'custom' ? await ask('Enter model name', currentModel) : modelChoice;
+    if (config.llm.groq) config.llm.groq.model = model;
 
   } else if (provider === 'gemini') {
     const existing = config.llm.gemini?.api_key;
@@ -239,13 +270,15 @@ export async function runOnboard(): Promise<void> {
   if (testConn) {
     const spin = startSpinner('Testing connection...');
     try {
-      const { LLMManager, AnthropicProvider, OpenAIProvider, GeminiProvider, OllamaProvider, OpenRouterProvider } = await import('../llm/index.ts');
+      const { LLMManager, AnthropicProvider, OpenAIProvider, GroqProvider, GeminiProvider, OllamaProvider, OpenRouterProvider } = await import('../llm/index.ts');
       const manager = new LLMManager();
 
       if (provider === 'anthropic' && config.llm.anthropic?.api_key) {
         manager.registerProvider(new AnthropicProvider(config.llm.anthropic.api_key, config.llm.anthropic.model));
       } else if (provider === 'openai' && config.llm.openai?.api_key) {
         manager.registerProvider(new OpenAIProvider(config.llm.openai.api_key, config.llm.openai.model));
+      } else if (provider === 'groq' && config.llm.groq?.api_key) {
+        manager.registerProvider(new GroqProvider(config.llm.groq.api_key, config.llm.groq.model));
       } else if (provider === 'gemini' && config.llm.gemini?.api_key) {
         manager.registerProvider(new GeminiProvider(config.llm.gemini.api_key, config.llm.gemini.model));
       } else if (provider === 'openrouter' && config.llm.openrouter?.api_key) {
@@ -273,7 +306,7 @@ export async function runOnboard(): Promise<void> {
   }
 
   // Fallback providers
-  config.llm.fallback = ['anthropic', 'openai', 'gemini', 'openrouter', 'ollama'].filter(p => p !== provider);
+  config.llm.fallback = ['anthropic', 'openai', 'groq', 'gemini', 'openrouter', 'ollama'].filter(p => p !== provider);
 
   // ── Step 3: Fallback API Keys ─────────────────────────────────────
 
@@ -289,6 +322,9 @@ export async function runOnboard(): Promise<void> {
       } else if (fb === 'openai' && (!config.llm.openai?.api_key || config.llm.openai.api_key === '')) {
         const key = await askSecret('OpenAI API key (for fallback)');
         if (key) config.llm.openai = { ...config.llm.openai, api_key: key, model: config.llm.openai?.model ?? 'gpt-5.4' };
+      } else if (fb === 'groq' && (!config.llm.groq?.api_key || config.llm.groq.api_key === '')) {
+        const key = await askSecret('Groq API key (for fallback)');
+        if (key) config.llm.groq = { ...config.llm.groq, api_key: key, model: config.llm.groq?.model ?? 'llama-3.3-70b-versatile' };
       } else if (fb === 'gemini' && (!config.llm.gemini?.api_key || config.llm.gemini.api_key === '')) {
         const key = await askSecret('Google AI API key (for fallback)');
         if (key) config.llm.gemini = { ...config.llm.gemini, api_key: key, model: config.llm.gemini?.model ?? 'gemini-3-flash-preview' };
