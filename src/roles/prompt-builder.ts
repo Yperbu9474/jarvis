@@ -3,6 +3,7 @@ import { buildToolGuide } from './tool-guide.ts';
 
 export type PromptContext = {
   userName?: string;
+  userProfile?: string;
   currentTime?: string;
   activeCommitments?: string[];
   recentObservations?: string[];
@@ -133,6 +134,13 @@ export function buildSystemPrompt(role: RoleDefinition, context?: PromptContext)
 
     if (context.userName) {
       sections.push(`User: ${context.userName}`);
+    }
+
+    if (context.userProfile) {
+      sections.push('');
+      sections.push('## User Profile');
+      sections.push('The following is durable context the user intentionally shared about themselves:');
+      sections.push(context.userProfile);
     }
 
     if (context.currentTime) {

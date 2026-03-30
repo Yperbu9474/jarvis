@@ -22,9 +22,9 @@ const DashboardPage = React.lazy(() => import("./pages/DashboardPage"));
 
 type Route = "dashboard" | "chat" | "tasks" | "pipeline" | "memory" | "calendar" | "office" | "knowledge" | "command" | "authority" | "awareness" | "workflows" | "goals" | "settings";
 
-export type SettingsSection = "general" | "llm" | "channels" | "integrations" | "sidecar";
+export type SettingsSection = "general" | "profile" | "llm" | "channels" | "integrations" | "sidecar";
 
-const SETTINGS_SECTIONS: SettingsSection[] = ["general", "llm", "channels", "integrations", "sidecar"];
+const SETTINGS_SECTIONS: SettingsSection[] = ["general", "profile", "llm", "channels", "integrations", "sidecar"];
 
 function getRoute(): Route {
   const hash = window.location.hash.replace("#/", "");
@@ -90,6 +90,7 @@ const NAV_MORE: NavEntry[] = [
 
 const SETTINGS_NAV: { section: SettingsSection; label: string }[] = [
   { section: "general", label: "General" },
+  { section: "profile", label: "Profile" },
   { section: "llm", label: "LLM" },
   { section: "channels", label: "Channels" },
   { section: "integrations", label: "Integrations" },
