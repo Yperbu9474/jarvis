@@ -8,14 +8,14 @@ import type {
   LLMToolCall,
 } from './provider.ts';
 
-type OpenAIMessage = {
+type GroqMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
-  tool_calls?: OpenAIToolCall[];
+  tool_calls?: GroqToolCall[];
   tool_call_id?: string;
 };
 
-type OpenAIToolDef = {
+type GroqToolDef = {
   type: 'function';
   function: {
     name: string;
@@ -24,7 +24,7 @@ type OpenAIToolDef = {
   };
 };
 
-type OpenAIToolCall = {
+type GroqToolCall = {
   id: string;
   type: 'function';
   function: {
@@ -33,7 +33,7 @@ type OpenAIToolCall = {
   };
 };
 
-type OpenAIResponse = {
+type GroqResponse = {
   id: string;
   object: 'chat.completion';
   created: number;
@@ -43,7 +43,7 @@ type OpenAIResponse = {
     message: {
       role: 'assistant';
       content: string | null;
-      tool_calls?: OpenAIToolCall[];
+      tool_calls?: GroqToolCall[];
     };
     finish_reason: 'stop' | 'length' | 'tool_calls' | 'content_filter' | null;
   }>;
@@ -54,7 +54,7 @@ type OpenAIResponse = {
   };
 };
 
-type OpenAIStreamChunk = {
+type GroqStreamChunk = {
   id: string;
   object: 'chat.completion.chunk';
   created: number;
@@ -78,20 +78,19 @@ type OpenAIStreamChunk = {
   }>;
 };
 
-export class OpenAIProvider implements LLMProvider {
-  name = 'openai';
+export class GroqProvider implements LLMProvider {
+  name = 'groq';
   private apiKey: string;
   private defaultModel: string;
-  private apiUrl = 'https://api.openai.com/v1/chat/completions';
+  private apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
 
-  constructor(apiKey: string, defaultModel = 'gpt-4o') {
+  constructor(apiKey: string, defaultModel = 'llama-3.3-70b-versatile') {
     this.apiKey = apiKey;
     this.defaultModel = defaultModel;
   }
 
   async chat(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
     const { model = this.defaultModel, temperature, max_tokens, tools } = options;
-
     const body: Record<string, unknown> = {
       model,
       messages: this.convertMessages(messages),
@@ -114,10 +113,10 @@ export class OpenAIProvider implements LLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
+      throw new Error(`Groq API error (${response.status}): ${errorText}`);
     }
 
-    const data = await response.json() as OpenAIResponse;
+    const data = await response.json() as GroqResponse;
     return this.convertResponse(data);
   }
 
@@ -147,7 +146,7 @@ export class OpenAIProvider implements LLMProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      yield { type: 'error', error: `OpenAI API error (${response.status}): ${errorText}` };
+      yield { type: 'error', error: `Groq API error (${response.status}): ${errorText}` };
       return;
     }
 
@@ -182,7 +181,7 @@ export class OpenAIProvider implements LLMProvider {
           if (data === '[DONE]') continue;
 
           try {
-            const chunk = JSON.parse(data) as OpenAIStreamChunk;
+            const chunk = JSON.parse(data) as GroqStreamChunk;
             if (chunk.choices && chunk.choices.length > 0) {
               const choice = chunk.choices[0];
               responseModel = chunk.model;
@@ -246,7 +245,7 @@ export class OpenAIProvider implements LLMProvider {
         response: {
           content: accumulatedText,
           tool_calls: toolCalls,
-          usage: { input_tokens: 0, output_tokens: 0 }, // OpenAI doesn't provide usage in stream
+          usage: { input_tokens: 0, output_tokens: 0 },
           model: responseModel,
           finish_reason: mappedFinishReason,
         },
@@ -258,7 +257,7 @@ export class OpenAIProvider implements LLMProvider {
 
   async listModels(): Promise<string[]> {
     try {
-      const response = await fetch('https://api.openai.com/v1/models', {
+      const response = await fetch('https://api.groq.com/openai/v1/models', {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
         },
@@ -269,28 +268,23 @@ export class OpenAIProvider implements LLMProvider {
       }
 
       const data = await response.json() as { data: Array<{ id: string }> };
-      return data.data
-        .map(m => m.id)
-        .filter(id => id.startsWith('gpt-'))
-        .sort();
-    } catch (err) {
-      // Fallback to known models if API call fails
+      return data.data.map(m => m.id).sort();
+    } catch (_err) {
       return [
-        'gpt-4o',
-        'gpt-4o-mini',
-        'gpt-4-turbo',
-        'gpt-4',
-        'gpt-3.5-turbo',
+        'llama-3.3-70b-versatile',
+        'llama-3.1-8b-instant',
+        'qwen/qwen3-32b',
+        'deepseek-r1-distill-llama-70b',
       ];
     }
   }
 
-  private convertMessages(messages: LLMMessage[]): OpenAIMessage[] {
+  private convertMessages(messages: LLMMessage[]): GroqMessage[] {
     return messages.map(m => {
       const text = typeof m.content === 'string'
         ? m.content
         : m.content.map((b) => b.type === 'text' ? b.text : '[image]').join('\n');
-      const msg: OpenAIMessage = {
+      const msg: GroqMessage = {
         role: m.role as 'system' | 'user' | 'assistant' | 'tool',
         content: text,
       };
@@ -308,7 +302,7 @@ export class OpenAIProvider implements LLMProvider {
     });
   }
 
-  private convertTools(tools: LLMTool[]): OpenAIToolDef[] {
+  private convertTools(tools: LLMTool[]): GroqToolDef[] {
     return tools.map(tool => ({
       type: 'function',
       function: {
@@ -319,7 +313,7 @@ export class OpenAIProvider implements LLMProvider {
     }));
   }
 
-  private convertResponse(response: OpenAIResponse): LLMResponse {
+  private convertResponse(response: GroqResponse): LLMResponse {
     const choice = response.choices[0]!;
     const message = choice.message;
     const content = message.content || '';

@@ -6,6 +6,7 @@ type LLMConfig = {
   fallback: string[];
   anthropic: { model: string; has_api_key: boolean } | null;
   openai: { model: string; has_api_key: boolean } | null;
+  groq: { model: string; has_api_key: boolean } | null;
   gemini: { model: string; has_api_key: boolean } | null;
   ollama: { base_url: string; model: string } | null;
   openrouter: { model: string; has_api_key: boolean } | null;
@@ -31,6 +32,13 @@ const OPENAI_MODELS = [
   "gpt-4.1",
   "o3",
   "o4-mini",
+];
+
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "qwen/qwen3-32b",
+  "deepseek-r1-distill-llama-70b",
 ];
 
 const GEMINI_MODELS = [
@@ -67,11 +75,12 @@ const OPENROUTER_MODELS = [
   "mistralai/mistral-large",
 ];
 
-const PROVIDERS = ["anthropic", "openai", "gemini", "ollama", "openrouter"] as const;
+const PROVIDERS = ["anthropic", "openai", "groq", "gemini", "ollama", "openrouter"] as const;
 
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
+  groq: "Groq",
   gemini: "Gemini",
   ollama: "Ollama",
   openrouter: "OpenRouter",
@@ -94,6 +103,11 @@ export function LLMPanel() {
   const [openaiModel, setOpenaiModel] = useState("gpt-5.4");
   const [openaiCustomModel, setOpenaiCustomModel] = useState("");
 
+  // Groq
+  const [groqKey, setGroqKey] = useState("");
+  const [groqModel, setGroqModel] = useState("llama-3.3-70b-versatile");
+  const [groqCustomModel, setGroqCustomModel] = useState("");
+
   // Gemini
   const [geminiKey, setGeminiKey] = useState("");
   const [geminiModel, setGeminiModel] = useState("gemini-3-flash-preview");
@@ -114,6 +128,7 @@ export function LLMPanel() {
   const [message, setMessage] = useState<{ text: string; type: "ok" | "error" } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, TestResult>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // Sync form state when config loads
   useEffect(() => {
@@ -139,6 +154,16 @@ export function LLMPanel() {
       } else {
         setOpenaiModel("custom");
         setOpenaiCustomModel(m);
+      }
+    }
+    if (config.groq) {
+      const m = config.groq.model;
+      if (GROQ_MODELS.includes(m)) {
+        setGroqModel(m);
+        setGroqCustomModel("");
+      } else {
+        setGroqModel("custom");
+        setGroqCustomModel(m);
       }
     }
     if (config.gemini) {
@@ -192,6 +217,10 @@ export function LLMPanel() {
           model: resolveModel(openaiModel, openaiCustomModel),
           ...(openaiKey ? { api_key: openaiKey } : {}),
         },
+        groq: {
+          model: resolveModel(groqModel, groqCustomModel),
+          ...(groqKey ? { api_key: groqKey } : {}),
+        },
         gemini: {
           model: resolveModel(geminiModel, geminiCustomModel),
           ...(geminiKey ? { api_key: geminiKey } : {}),
@@ -212,6 +241,7 @@ export function LLMPanel() {
       setMessage({ text: resp.message, type: "ok" });
       setAnthropicKey("");
       setOpenaiKey("");
+      setGroqKey("");
       setGeminiKey("");
       setOpenrouterKey("");
       refetch();
@@ -234,6 +264,9 @@ export function LLMPanel() {
       } else if (provider === "openai") {
         body.api_key = openaiKey || undefined;
         body.model = resolveModel(openaiModel, openaiCustomModel);
+      } else if (provider === "groq") {
+        body.api_key = groqKey || undefined;
+        body.model = resolveModel(groqModel, groqCustomModel);
       } else if (provider === "gemini") {
         body.api_key = geminiKey || undefined;
         body.model = resolveModel(geminiModel, geminiCustomModel);
@@ -307,36 +340,7 @@ export function LLMPanel() {
         </select>
       </div>
 
-      {/* Fallback chain */}
-      <div style={{ marginBottom: "16px" }}>
-        <div style={labelStyle}>Fallback Chain</div>
-        <div style={{ display: "flex", gap: "8px" }}>
-          {PROVIDERS.filter((p) => p !== primary).map((p) => (
-            <label
-              key={p}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "13px",
-                color: "var(--j-text-dim)",
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={fallback.includes(p)}
-                onChange={() => toggleFallback(p)}
-                style={{ accentColor: "var(--j-accent)" }}
-              />
-              {PROVIDER_LABELS[p] ?? p}
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ borderTop: "1px solid var(--j-border)", paddingTop: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
-        {/* Anthropic */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         <ProviderSection
           name="Anthropic"
           provider="anthropic"
@@ -352,9 +356,12 @@ export function LLMPanel() {
           testing={testing === "anthropic"}
           testResult={testResult.anthropic}
           onTest={() => handleTest("anthropic")}
+          isFallback={fallback.includes("anthropic")}
+          onFallbackToggle={() => toggleFallback("anthropic")}
+          expanded={!!expanded.anthropic}
+          onToggleExpand={() => setExpanded((s) => ({ ...s, anthropic: !s.anthropic }))}
         />
 
-        {/* OpenAI */}
         <ProviderSection
           name="OpenAI"
           provider="openai"
@@ -370,9 +377,12 @@ export function LLMPanel() {
           testing={testing === "openai"}
           testResult={testResult.openai}
           onTest={() => handleTest("openai")}
+          isFallback={fallback.includes("openai")}
+          onFallbackToggle={() => toggleFallback("openai")}
+          expanded={!!expanded.openai}
+          onToggleExpand={() => setExpanded((s) => ({ ...s, openai: !s.openai }))}
         />
 
-        {/* Gemini */}
         <ProviderSection
           name="Gemini"
           provider="gemini"
@@ -388,9 +398,36 @@ export function LLMPanel() {
           testing={testing === "gemini"}
           testResult={testResult.gemini}
           onTest={() => handleTest("gemini")}
+          isFallback={fallback.includes("gemini")}
+          onFallbackToggle={() => toggleFallback("gemini")}
+          expanded={!!expanded.gemini}
+          onToggleExpand={() => setExpanded((s) => ({ ...s, gemini: !s.gemini }))}
         />
 
-        {/* OpenRouter */}
+        <ProviderSection
+          name="Ollama"
+          provider="ollama"
+          isPrimary={primary === "ollama"}
+          hasKey={!!config.ollama}
+          apiKey=""
+          onApiKeyChange={() => {}}
+          model={ollamaModel}
+          customModel={ollamaCustomModel}
+          onModelChange={setOllamaModel}
+          onCustomModelChange={setOllamaCustomModel}
+          models={OLLAMA_MODELS}
+          testing={testing === "ollama"}
+          testResult={testResult.ollama}
+          onTest={() => handleTest("ollama")}
+          isFallback={fallback.includes("ollama")}
+          onFallbackToggle={() => toggleFallback("ollama")}
+          expanded={!!expanded.ollama}
+          onToggleExpand={() => setExpanded((s) => ({ ...s, ollama: !s.ollama }))}
+          hideApiKey
+          baseUrl={ollamaBaseUrl}
+          onBaseUrlChange={setOllamaBaseUrl}
+        />
+
         <ProviderSection
           name="OpenRouter"
           provider="openrouter"
@@ -406,62 +443,32 @@ export function LLMPanel() {
           testing={testing === "openrouter"}
           testResult={testResult.openrouter}
           onTest={() => handleTest("openrouter")}
+          isFallback={fallback.includes("openrouter")}
+          onFallbackToggle={() => toggleFallback("openrouter")}
+          expanded={!!expanded.openrouter}
+          onToggleExpand={() => setExpanded((s) => ({ ...s, openrouter: !s.openrouter }))}
         />
 
-        {/* Ollama */}
-        <div style={providerCardStyle}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-            <span style={dotStyle(!!config.ollama)} />
-            <span style={{ fontWeight: 600, fontSize: "13px" }}>Ollama</span>
-            {primary === "ollama" && <span style={primaryBadgeStyle}>PRIMARY</span>}
-            <span style={{ fontSize: "11px", color: "var(--j-text-muted)", marginLeft: "auto" }}>No API key needed</span>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <div>
-              <div style={fieldLabelStyle}>Base URL</div>
-              <input
-                type="text"
-                value={ollamaBaseUrl}
-                onChange={(e) => setOllamaBaseUrl(e.target.value)}
-                placeholder="http://localhost:11434"
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <div style={fieldLabelStyle}>Model</div>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
-                  {OLLAMA_MODELS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  <option value="custom">Custom...</option>
-                </select>
-                {ollamaModel === "custom" && (
-                  <input
-                    type="text"
-                    value={ollamaCustomModel}
-                    onChange={(e) => setOllamaCustomModel(e.target.value)}
-                    placeholder="model name"
-                    style={{ ...inputStyle, flex: 1 }}
-                  />
-                )}
-              </div>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
-              <button onClick={() => handleTest("ollama")} disabled={testing === "ollama"} style={testBtnStyle}>
-                {testing === "ollama" ? "Testing..." : "Test Connection"}
-              </button>
-              {testResult.ollama && (
-                <span style={{ fontSize: "11px", color: testResult.ollama.ok ? "var(--j-success)" : "var(--j-error)" }}>
-                  {testResult.ollama.ok ? `Connected (${testResult.ollama.model})` : testResult.ollama.error}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
+        <ProviderSection
+          name="Groq"
+          provider="groq"
+          isPrimary={primary === "groq"}
+          hasKey={config.groq?.has_api_key ?? false}
+          apiKey={groqKey}
+          onApiKeyChange={setGroqKey}
+          model={groqModel}
+          customModel={groqCustomModel}
+          onModelChange={setGroqModel}
+          onCustomModelChange={setGroqCustomModel}
+          models={GROQ_MODELS}
+          testing={testing === "groq"}
+          testResult={testResult.groq}
+          onTest={() => handleTest("groq")}
+          isFallback={fallback.includes("groq")}
+          onFallbackToggle={() => toggleFallback("groq")}
+          expanded={!!expanded.groq}
+          onToggleExpand={() => setExpanded((s) => ({ ...s, groq: !s.groq }))}
+        />
       </div>
 
       {/* Save */}
@@ -491,66 +498,173 @@ type ProviderSectionProps = {
   testing: boolean;
   testResult?: TestResult;
   onTest: () => void;
+  isFallback: boolean;
+  onFallbackToggle: () => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  hideApiKey?: boolean;
+  baseUrl?: string;
+  onBaseUrlChange?: (v: string) => void;
 };
+
+function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: () => void; disabled?: boolean }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={disabled ? undefined : onChange}
+      style={{
+        position: "relative",
+        width: "32px",
+        height: "18px",
+        borderRadius: "9px",
+        border: "none",
+        background: checked ? "var(--j-accent)" : "rgba(255,255,255,0.08)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "background 0.2s",
+        padding: 0,
+        flexShrink: 0,
+        opacity: disabled ? 0.4 : 1,
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: "2px",
+          left: checked ? "16px" : "2px",
+          width: "14px",
+          height: "14px",
+          borderRadius: "50%",
+          background: checked ? "#fff" : "rgba(255,255,255,0.35)",
+          transition: "left 0.2s, background 0.2s",
+          boxShadow: checked ? "0 1px 3px rgba(0,0,0,0.3)" : "none",
+        }}
+      />
+    </button>
+  );
+}
 
 function ProviderSection({
   name, provider, isPrimary, hasKey,
   apiKey, onApiKeyChange,
   model, customModel, onModelChange, onCustomModelChange,
   models, testing, testResult, onTest,
+  isFallback, onFallbackToggle,
+  expanded, onToggleExpand,
+  hideApiKey, baseUrl, onBaseUrlChange,
 }: ProviderSectionProps) {
   return (
     <div style={providerCardStyle}>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+      <button
+        onClick={onToggleExpand}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          width: "100%",
+          background: "none",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <span
+          style={{
+            display: "inline-block",
+            transition: "transform 0.2s",
+            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+            fontSize: "8px",
+            color: "var(--j-text-muted)",
+            flexShrink: 0,
+          }}
+        >
+          &#9654;
+        </span>
         <span style={dotStyle(hasKey)} />
-        <span style={{ fontWeight: 600, fontSize: "13px" }}>{name}</span>
+        <span style={{ fontWeight: 600, fontSize: "13px", color: "var(--j-text)" }}>{name}</span>
         {isPrimary && <span style={primaryBadgeStyle}>PRIMARY</span>}
-      </div>
+      </button>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        <div>
-          <div style={fieldLabelStyle}>API Key</div>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => onApiKeyChange(e.target.value)}
-            placeholder={hasKey ? "Stored securely — leave empty to keep" : "Enter API key"}
-            style={inputStyle}
-          />
-        </div>
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
+          {!hideApiKey && (
+            <div>
+              <div style={fieldLabelStyle}>API Key</div>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => onApiKeyChange(e.target.value)}
+                placeholder={hasKey ? "Stored securely — leave empty to keep" : "Enter API key"}
+                style={inputStyle}
+              />
+            </div>
+          )}
 
-        <div>
-          <div style={fieldLabelStyle}>Model</div>
-          <div style={{ display: "flex", gap: "6px" }}>
-            <select value={model} onChange={(e) => onModelChange(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
-              {models.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-              <option value="custom">Custom...</option>
-            </select>
-            {model === "custom" && (
+          {baseUrl !== undefined && onBaseUrlChange && (
+            <div>
+              <div style={fieldLabelStyle}>Base URL</div>
               <input
                 type="text"
-                value={customModel}
-                onChange={(e) => onCustomModelChange(e.target.value)}
-                placeholder="model ID"
-                style={{ ...inputStyle, flex: 1 }}
+                value={baseUrl}
+                onChange={(e) => onBaseUrlChange(e.target.value)}
+                placeholder="http://localhost:11434"
+                style={inputStyle}
               />
+            </div>
+          )}
+
+          <div>
+            <div style={fieldLabelStyle}>Model</div>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <select value={model} onChange={(e) => onModelChange(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
+                {models.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+                <option value="custom">Custom...</option>
+              </select>
+              {model === "custom" && (
+                <input
+                  type="text"
+                  value={customModel}
+                  onChange={(e) => onCustomModelChange(e.target.value)}
+                  placeholder="model ID"
+                  style={{ ...inputStyle, flex: 1 }}
+                />
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+            {!isPrimary && (
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                <ToggleSwitch checked={isFallback} onChange={onFallbackToggle} />
+                <span style={{ fontSize: "12px", color: "var(--j-text-dim)" }}>
+                  Fallback
+                </span>
+              </label>
             )}
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "8px" }}>
+              <button onClick={onTest} disabled={testing} style={testBtnStyle}>
+                {testing ? "Testing..." : "Test Connection"}
+              </button>
+              {testResult && (
+                <span style={{ fontSize: "11px", color: testResult.ok ? "var(--j-success)" : "var(--j-error)" }}>
+                  {testResult.ok ? `Connected (${testResult.model})` : testResult.error}
+                </span>
+              )}
+            </div>
           </div>
         </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
-          <button onClick={onTest} disabled={testing} style={testBtnStyle}>
-            {testing ? "Testing..." : "Test Connection"}
-          </button>
-          {testResult && (
-            <span style={{ fontSize: "11px", color: testResult.ok ? "var(--j-success)" : "var(--j-error)" }}>
-              {testResult.ok ? `Connected (${testResult.model})` : testResult.error}
-            </span>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

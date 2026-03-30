@@ -151,6 +151,7 @@ export type JarvisConfig = {
     user_driven_only?: boolean;
     anthropic?: { api_key: string; model?: string };
     openai?: { api_key: string; model?: string };
+    groq?: { api_key: string; model?: string };
     gemini?: { api_key: string; model?: string };
     ollama?: { base_url?: string; model?: string };
     openrouter?: { api_key: string; model?: string };
@@ -161,6 +162,14 @@ export type JarvisConfig = {
   };
   workflows?: WorkflowConfig;
   goals?: GoalConfig;
+  sites?: {
+    enabled: boolean;
+    projects_dir: string;
+    port_range_start: number;
+    port_range_end: number;
+    auto_commit: boolean;
+    max_concurrent_servers: number;
+  };
   authority: AuthorityConfig;
   heartbeat: HeartbeatConfig;
   active_role: string;  // role file name
@@ -224,6 +233,10 @@ export const DEFAULT_CONFIG: JarvisConfig = {
       api_key: '',
       model: 'gpt-5.4',
     },
+    groq: {
+      api_key: '',
+      model: 'llama-3.3-70b-versatile',
+    },
     gemini: {
       api_key: '',
       model: 'gemini-3-flash-preview',
@@ -246,6 +259,14 @@ export const DEFAULT_CONFIG: JarvisConfig = {
       'adaptive',
     ],
     assistant_name: 'Jarvis',
+  },
+  sites: {
+    enabled: true,
+    projects_dir: '~/.jarvis/projects',
+    port_range_start: 4000,
+    port_range_end: 4999,
+    auto_commit: true,
+    max_concurrent_servers: 3,
   },
   authority: {
     default_level: 3,
