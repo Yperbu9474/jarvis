@@ -8,6 +8,7 @@
 
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { c, printOk, printErr, printWarn } from './helpers.ts';
 
@@ -77,10 +78,40 @@ async function installSystemd(): Promise<boolean> {
     }
 
     printOk(`Installed systemd service: ${SYSTEMD_SERVICE}`);
-    printOk('Service will start on boot. To start now: systemctl --user start jarvis');
+    printOk('Service will restart automatically and start on boot.');
     return true;
   } catch (err) {
     printErr(`Failed to install systemd service: ${err}`);
+    return false;
+  }
+}
+
+async function startSystemdService(): Promise<boolean> {
+  try {
+    const start = Bun.spawnSync(['systemctl', '--user', 'start', 'jarvis.service']);
+    if (start.exitCode !== 0) {
+      printErr('Failed to start systemd service. You may need to run: systemctl --user start jarvis.service');
+      return false;
+    }
+
+    printOk('JARVIS keepalive service is running.');
+    return true;
+  } catch (err) {
+    printErr(`Failed to start systemd service: ${err}`);
+    return false;
+  }
+}
+
+function scheduleSystemdRestart(): boolean {
+  try {
+    const child = spawn('bash', ['-lc', 'sleep 1; systemctl --user restart jarvis.service >/dev/null 2>&1'], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    child.unref();
+    return true;
+  } catch {
     return false;
   }
 }
@@ -179,6 +210,43 @@ async function installLaunchd(): Promise<boolean> {
   }
 }
 
+async function startLaunchdService(): Promise<boolean> {
+  try {
+    const bootstrap = Bun.spawnSync(['launchctl', 'bootstrap', `gui/${process.getuid?.() ?? ''}`, LAUNCHD_PLIST]);
+    if (bootstrap.exitCode !== 0) {
+      const load = Bun.spawnSync(['launchctl', 'load', LAUNCHD_PLIST]);
+      if (load.exitCode !== 0) {
+        printWarn('Installed launchd plist, but could not start it immediately. It should start on next login.');
+        return false;
+      }
+    }
+
+    printOk('JARVIS launch agent is running.');
+    return true;
+  } catch (err) {
+    printWarn(`Installed launchd plist, but could not start it immediately: ${err}`);
+    return false;
+  }
+}
+
+function scheduleLaunchdRestart(): boolean {
+  try {
+    const uid = process.getuid?.();
+    const command = uid != null
+      ? `sleep 1; launchctl kickstart -k gui/${uid}/ai.jarvis.daemon >/dev/null 2>&1`
+      : `sleep 1; launchctl kickstart -k gui/$(id -u)/ai.jarvis.daemon >/dev/null 2>&1`;
+    const child = spawn('bash', ['-lc', command], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function uninstallLaunchd(): Promise<boolean> {
   try {
     if (existsSync(LAUNCHD_PLIST)) {
@@ -208,6 +276,27 @@ export async function installAutostart(): Promise<boolean> {
     return installLaunchd();
   }
   return installSystemd();
+}
+
+/**
+ * Start the installed autostart service for the current platform.
+ */
+export async function startAutostartService(): Promise<boolean> {
+  if (process.platform === 'darwin') {
+    return startLaunchdService();
+  }
+  return startSystemdService();
+}
+
+/**
+ * Schedule a restart of the installed autostart service without blocking
+ * the current process. Useful when the API call is served by that service.
+ */
+export function scheduleAutostartRestart(): boolean {
+  if (process.platform === 'darwin') {
+    return scheduleLaunchdRestart();
+  }
+  return scheduleSystemdRestart();
 }
 
 /**
