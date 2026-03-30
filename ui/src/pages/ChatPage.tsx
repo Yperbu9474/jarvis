@@ -96,11 +96,18 @@ export default function ChatPage({ messages, isConnected, sendMessage, voice }: 
       <button
         className={`chat-fast-toggle ${fastMode ? "chat-fast-toggle-active" : ""}`}
         type="button"
+        role="switch"
+        aria-checked={fastMode}
         onClick={() => setFastMode((prev) => !prev)}
         title={fastMode ? "Fast chat mode on" : "Fast chat mode off"}
       >
-        <span className="chat-fast-toggle-dot" />
-        Fast Chat
+        <span className="chat-fast-toggle-labels">
+          <span className="chat-fast-toggle-title">Fast Chat</span>
+          <span className="chat-fast-toggle-state">{fastMode ? "On" : "Off"}</span>
+        </span>
+        <span className="chat-fast-toggle-switch" aria-hidden="true">
+          <span className="chat-fast-toggle-thumb" />
+        </span>
       </button>
 
       {/* Input */}
