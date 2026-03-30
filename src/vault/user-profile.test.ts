@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { closeDb, initDatabase } from './schema.ts';
 import { clearUserProfile, getUserProfile, saveUserProfile } from './user-profile.ts';
+import { findEntities } from './entities.ts';
+import { findFacts } from './facts.ts';
 import { countAnsweredUserProfileQuestions, formatUserProfileForPrompt } from '../user/profile.ts';
 
 describe('Vault — User Profile', () => {
@@ -33,6 +35,28 @@ describe('Vault — User Profile', () => {
     clearUserProfile();
 
     expect(getUserProfile()).toBeNull();
+    expect(findEntities({ name: 'Alex' })).toHaveLength(0);
+    expect(findFacts({ predicate: 'preferred_name' })).toHaveLength(0);
+  });
+
+  test('save syncs profile answers into the vault knowledge base', () => {
+    initDatabase(':memory:');
+
+    saveUserProfile({
+      preferred_name: 'Alex',
+      interests: 'AI, cars',
+      location_timezone: 'Miami / America/New_York',
+    });
+
+    const entities = findEntities({ name: 'Alex' });
+    expect(entities).toHaveLength(1);
+    expect(entities[0]!.source).toBe('user_profile');
+
+    const facts = findFacts({ subject_id: entities[0]!.id });
+    const factMap = new Map(facts.map((fact) => [fact.predicate, fact.object]));
+    expect(factMap.get('preferred_name')).toBe('Alex');
+    expect(factMap.get('interests')).toBe('AI, cars');
+    expect(factMap.get('location_timezone')).toBe('Miami / America/New_York');
   });
 
   test('prompt formatter includes answered fields only', () => {
