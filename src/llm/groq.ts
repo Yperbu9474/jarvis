@@ -82,11 +82,6 @@ export class GroqProvider implements LLMProvider {
   private apiKey: string;
   private defaultModel: string;
   private apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
-  private readonly maxRequestChars = 9000;
-  private readonly maxSystemChars = 3500;
-  private readonly maxMessageChars = 1200;
-  private readonly maxRecentMessages = 8;
-  private readonly maxRecentToolMessages = 2;
 
   constructor(apiKey: string, defaultModel = 'llama-3.3-70b-versatile') {
     this.apiKey = apiKey;
@@ -95,11 +90,9 @@ export class GroqProvider implements LLMProvider {
 
   async chat(messages: LLMMessage[], options: LLMOptions = {}): Promise<LLMResponse> {
     const { model = this.defaultModel, temperature, max_tokens, tools } = options;
-    const requestMessages = this.prepareMessages(messages);
-
     const body: Record<string, unknown> = {
       model,
-      messages: requestMessages,
+      messages: this.convertMessages(messages),
     };
 
     if (temperature !== undefined) body.temperature = temperature;
@@ -128,11 +121,10 @@ export class GroqProvider implements LLMProvider {
 
   async *stream(messages: LLMMessage[], options: LLMOptions = {}): AsyncIterable<LLMStreamEvent> {
     const { model = this.defaultModel, temperature, max_tokens, tools } = options;
-    const requestMessages = this.prepareMessages(messages);
 
     const body: Record<string, unknown> = {
       model,
-      messages: requestMessages,
+      messages: this.convertMessages(messages),
       stream: true,
     };
 
@@ -297,90 +289,6 @@ export class GroqProvider implements LLMProvider {
         ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
       };
     });
-  }
-
-  /**
-   * Keep Groq requests within lower-tier TPM constraints by trimming long
-   * context while preserving the most recent conversational turns.
-   */
-  private prepareMessages(messages: LLMMessage[]): GroqMessage[] {
-    const converted = this.convertMessages(messages);
-    const system = converted.find((m) => m.role === 'system');
-    const nonSystem = converted.filter((m) => m.role !== 'system');
-    const trimReasons: string[] = [];
-
-    const normalizedSystem = system
-      ? {
-          ...system,
-          content: this.truncate(system.content, this.maxSystemChars),
-        }
-      : null;
-    if (system && normalizedSystem && normalizedSystem.content !== system.content) {
-      trimReasons.push('system prompt truncated');
-    }
-
-    // Prefer recent context for conversation quality, but aggressively cap
-    // history/tool payloads to fit Groq TPM constraints.
-    const recent = nonSystem.slice(-40);
-    if (recent.length < nonSystem.length) {
-      trimReasons.push(`${nonSystem.length - recent.length} older messages dropped`);
-    }
-    const tail: GroqMessage[] = [];
-    let keptToolMessages = 0;
-    let skippedToolMessages = 0;
-    let truncatedMessages = 0;
-    for (let i = recent.length - 1; i >= 0; i--) {
-      const msg = recent[i]!;
-      if (msg.role === 'tool') {
-        if (keptToolMessages >= this.maxRecentToolMessages) {
-          skippedToolMessages++;
-          continue;
-        }
-        keptToolMessages++;
-      }
-      const truncatedContent = this.truncate(msg.content, this.maxMessageChars);
-      if (truncatedContent !== msg.content) truncatedMessages++;
-      tail.push({
-        ...msg,
-        content: truncatedContent,
-      });
-      if (tail.length >= this.maxRecentMessages) break;
-    }
-    tail.reverse();
-    if (skippedToolMessages > 0) {
-      trimReasons.push(`${skippedToolMessages} tool messages dropped`);
-    }
-    if (truncatedMessages > 0) {
-      trimReasons.push(`${truncatedMessages} messages truncated`);
-    }
-
-    const result: GroqMessage[] = [];
-    if (normalizedSystem) result.push(normalizedSystem);
-    result.push(...tail);
-
-    // Enforce global character budget by dropping oldest non-system messages.
-    let total = result.reduce((sum, m) => sum + m.content.length, 0);
-    let droppedForBudget = 0;
-    while (total > this.maxRequestChars && result.length > (normalizedSystem ? 1 : 0)) {
-      const removeIndex = normalizedSystem ? 1 : 0;
-      total -= result[removeIndex]!.content.length;
-      result.splice(removeIndex, 1);
-      droppedForBudget++;
-    }
-    if (droppedForBudget > 0) {
-      trimReasons.push(`${droppedForBudget} messages dropped for request budget`);
-    }
-    if (trimReasons.length > 0) {
-      console.warn(`[Groq] Trimming request context: ${trimReasons.join(', ')}`);
-    }
-
-    return result;
-  }
-
-  private truncate(value: string, maxChars: number): string {
-    if (value.length <= maxChars) return value;
-    const suffix = '\n\n[truncated for Groq token limit]';
-    return value.slice(0, Math.max(0, maxChars - suffix.length)) + suffix;
   }
 
   private convertTools(tools: LLMTool[]): GroqToolDef[] {
