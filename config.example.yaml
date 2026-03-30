@@ -31,6 +31,11 @@ llm:
     api_key: "sk-..."
     model: "gpt-4o"
 
+  # Groq (OpenAI-compatible) configuration
+  # groq:
+  #   api_key: "gsk_..."
+  #   model: "llama-3.3-70b-versatile"
+
   # OpenRouter (access hundreds of models via single API key)
   # openrouter:
   #   api_key: "sk-or-..."

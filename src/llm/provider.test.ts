@@ -1,6 +1,7 @@
 import { test, expect, describe } from 'bun:test';
 import { AnthropicProvider } from './anthropic.ts';
 import { OpenAIProvider } from './openai.ts';
+import { GroqProvider } from './groq.ts';
 import { OllamaProvider } from './ollama.ts';
 import { OpenRouterProvider } from './openrouter.ts';
 import { LLMManager } from './manager.ts';
@@ -16,6 +17,11 @@ describe('LLM Provider Types', () => {
   test('OpenAIProvider can be instantiated', () => {
     const provider = new OpenAIProvider('test-key', 'test-model');
     expect(provider.name).toBe('openai');
+  });
+
+  test('GroqProvider can be instantiated', () => {
+    const provider = new GroqProvider('test-key', 'test-model');
+    expect(provider.name).toBe('groq');
   });
 
   test('OllamaProvider can be instantiated', () => {
@@ -130,6 +136,11 @@ describe('Provider URLs', () => {
     expect(provider.apiUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
   });
 
+  test('GroqProvider uses correct API URL', () => {
+    const provider = new GroqProvider('test-key') as any;
+    expect(provider.apiUrl).toBe('https://api.groq.com/openai/v1/chat/completions');
+  });
+
   test('OllamaProvider uses correct base URL', () => {
     const provider = new OllamaProvider() as any;
     expect(provider.baseUrl).toBe('http://localhost:11434');
@@ -157,6 +168,11 @@ describe('Default Models', () => {
     expect(provider.defaultModel).toBe('llama3');
   });
 
+  test('GroqProvider has correct default model', () => {
+    const provider = new GroqProvider('test-key') as any;
+    expect(provider.defaultModel).toBe('llama-3.3-70b-versatile');
+  });
+
   test('OpenRouterProvider has correct default model', () => {
     const provider = new OpenRouterProvider('test-key') as any;
     expect(provider.defaultModel).toBe('anthropic/claude-sonnet-4');
@@ -165,11 +181,13 @@ describe('Default Models', () => {
   test('can override default models', () => {
     const anthropic = new AnthropicProvider('key', 'custom-model') as any;
     const openai = new OpenAIProvider('key', 'custom-model') as any;
+    const groq = new GroqProvider('key', 'custom-model') as any;
     const ollama = new OllamaProvider('http://localhost:11434', 'custom-model') as any;
     const openrouter = new OpenRouterProvider('key', 'custom-model') as any;
 
     expect(anthropic.defaultModel).toBe('custom-model');
     expect(openai.defaultModel).toBe('custom-model');
+    expect(groq.defaultModel).toBe('custom-model');
     expect(ollama.defaultModel).toBe('custom-model');
     expect(openrouter.defaultModel).toBe('custom-model');
   });
@@ -245,5 +263,83 @@ describe('Vision Support', () => {
       expect(Array.isArray(msg.content)).toBe(true);
       expect((msg.content as ContentBlock[]).length).toBe(2);
     });
+  });
+});
+
+describe('Tool Call Conversion', () => {
+  const toolUseConversation: LLMMessage[] = [
+    { role: 'system', content: 'You are helpful' },
+    { role: 'user', content: 'What time is it?' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        { id: 'call_1', name: 'get_time', arguments: { timezone: 'UTC' } },
+      ],
+    },
+    {
+      role: 'tool',
+      content: '2026-03-30T12:00:00Z',
+      tool_call_id: 'call_1',
+    },
+  ];
+
+  test('OpenAIProvider preserves tool_calls on assistant messages', () => {
+    const provider = new OpenAIProvider('test-key') as any;
+    const converted = provider.convertMessages(toolUseConversation);
+
+    const assistant = converted[2];
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.tool_calls).toBeDefined();
+    expect(assistant.tool_calls).toHaveLength(1);
+    expect(assistant.tool_calls[0].id).toBe('call_1');
+    expect(assistant.tool_calls[0].type).toBe('function');
+    expect(assistant.tool_calls[0].function.name).toBe('get_time');
+    expect(assistant.tool_calls[0].function.arguments).toBe('{"timezone":"UTC"}');
+  });
+
+  test('OpenAIProvider preserves tool_call_id on tool messages', () => {
+    const provider = new OpenAIProvider('test-key') as any;
+    const converted = provider.convertMessages(toolUseConversation);
+
+    const tool = converted[3];
+    expect(tool.role).toBe('tool');
+    expect(tool.tool_call_id).toBe('call_1');
+    expect(tool.content).toBe('2026-03-30T12:00:00Z');
+  });
+
+  test('GroqProvider preserves tool_calls on assistant messages', () => {
+    const provider = new GroqProvider('test-key') as any;
+    const converted = provider.convertMessages(toolUseConversation);
+
+    const assistant = converted[2];
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.tool_calls).toBeDefined();
+    expect(assistant.tool_calls).toHaveLength(1);
+    expect(assistant.tool_calls[0].id).toBe('call_1');
+    expect(assistant.tool_calls[0].type).toBe('function');
+    expect(assistant.tool_calls[0].function.name).toBe('get_time');
+    expect(assistant.tool_calls[0].function.arguments).toBe('{"timezone":"UTC"}');
+  });
+
+  test('GroqProvider preserves tool_call_id on tool messages', () => {
+    const provider = new GroqProvider('test-key') as any;
+    const converted = provider.convertMessages(toolUseConversation);
+
+    const tool = converted[3];
+    expect(tool.role).toBe('tool');
+    expect(tool.tool_call_id).toBe('call_1');
+    expect(tool.content).toBe('2026-03-30T12:00:00Z');
+  });
+
+  test('Messages without tool_calls omit the field', () => {
+    const provider = new OpenAIProvider('test-key') as any;
+    const converted = provider.convertMessages([
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi there' },
+    ]);
+    expect(converted[0].tool_calls).toBeUndefined();
+    expect(converted[1].tool_calls).toBeUndefined();
+    expect(converted[0].tool_call_id).toBeUndefined();
   });
 });
