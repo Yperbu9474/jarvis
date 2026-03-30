@@ -138,9 +138,9 @@ let CORS: Record<string, string> = {
 };
 
 /** Call once during init to set the correct CORS origin from config */
-export function setCorsOrigin(port: number, host = 'localhost', protocol = 'http') {
+export function setCorsOrigin(origin: string) {
   CORS = {
-    'Access-Control-Allow-Origin': `${protocol}://${host}:${port}`,
+    'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };

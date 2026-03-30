@@ -16,6 +16,7 @@ export type SubAgentEvent = {
 
 export type ChatMessage = {
   id: string;
+  requestId?: string;
   role: MessageRole;
   content: string;
   timestamp: number;
@@ -367,6 +368,7 @@ export function useWebSocket() {
         item?: ContentEvent["item"];
         event?: any;
         text?: string;
+        requestId?: string;
         approvalPrompt?: ChatMessage["approvalPrompt"];
       };
       if (payload.source === "task_update" && payload.task && payload.action) {
@@ -396,6 +398,7 @@ export function useWebSocket() {
           ...prev,
           {
             id: msg.id ?? crypto.randomUUID(),
+            requestId: payload.requestId,
             role: "assistant",
             content: String(payload.text),
             timestamp: msg.timestamp,

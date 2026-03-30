@@ -33,8 +33,22 @@ export function ServicePanel() {
     }
   };
 
-  if (loading || !data) {
+  if (loading) {
     return <div style={cardStyle}><span style={mutedTextStyle}>Loading service controls...</span></div>;
+  }
+
+  if (error && !data) {
+    return (
+      <div style={cardStyle}>
+        <div style={{ ...messageStyle, color: "var(--j-error)", borderColor: "rgba(248, 113, 113, 0.22)", background: "rgba(248, 113, 113, 0.08)", marginBottom: 0 }}>
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return <div style={cardStyle}><span style={mutedTextStyle}>Service controls unavailable.</span></div>;
   }
 
   return (

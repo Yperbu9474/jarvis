@@ -46,7 +46,7 @@ export class WebSocketService implements Service {
   private ttsProvider: TTSProvider | null = null;
   private sttProvider: STTProvider | null = null;
   private voiceSessions = new Map<ServerWebSocket<unknown>, VoiceSession>();
-  private pendingFastApprovals = new Map<string, PendingFastApproval>();
+  private pendingFastApprovals = new Map<ServerWebSocket<unknown>, PendingFastApproval>();
   private siteBuilderService: import('../sites/service.ts').SiteBuilderService | null = null;
 
   constructor(port: number, agentService: AgentService) {
@@ -154,6 +154,7 @@ export class WebSocketService implements Service {
         onDisconnect: (ws) => {
           // Clean up any pending voice session for this client
           this.voiceSessions.delete(ws);
+          this.pendingFastApprovals.delete(ws);
           console.log('[WSService] Client disconnected');
         },
       });
@@ -250,6 +251,7 @@ export class WebSocketService implements Service {
     opts?: {
       requestId?: string;
       approvalPrompt?: { kind: 'tool' | 'delegate'; label: string };
+      target?: ServerWebSocket<unknown>;
     },
   ): void {
     const message: WSMessage = {
@@ -257,11 +259,16 @@ export class WebSocketService implements Service {
       payload: {
         source: 'assistant_message',
         text,
+        requestId: opts?.requestId,
         approvalPrompt: opts?.approvalPrompt,
       },
-      id: opts?.requestId,
+      id: crypto.randomUUID(),
       timestamp: Date.now(),
     };
+    if (opts?.target) {
+      this.wsServer.sendToClient(opts.target, message);
+      return;
+    }
     this.wsServer.broadcast(message);
   }
 
@@ -634,11 +641,11 @@ If the user wants to create a new project, tell them to use the Site Builder pag
       addMessage(conversation.id, { role: 'user', content: text });
 
       if (fastMode) {
-        const pending = this.pendingFastApprovals.get(channel);
+        const pending = ws ? this.pendingFastApprovals.get(ws) : undefined;
         const approvalDecision = pending ? parseFastApprovalDecision(text) : null;
 
         if (pending && approvalDecision === 'approve') {
-          this.pendingFastApprovals.delete(channel);
+          if (ws) this.pendingFastApprovals.delete(ws);
           const { stream, onComplete } = this.agentService.streamFastApprovedAction(pending, channel);
           const fullText = await this.streamRelay.relayStream(stream, requestId);
           addMessage(conversation.id, { role: 'assistant', content: fullText });
@@ -653,11 +660,11 @@ If the user wants to create a new project, tell them to use the Site Builder pag
         }
 
         if (pending && approvalDecision === 'deny') {
-          this.pendingFastApprovals.delete(channel);
+          if (ws) this.pendingFastApprovals.delete(ws);
           const deniedText = pending.kind === 'delegate'
             ? `Okay. I won't delegate this task to \`${pending.specialistName}\`.`
             : `Okay. I won't use the \`${pending.toolName}\` tool for this request.`;
-          this.broadcastAssistantMessage(deniedText, { requestId });
+          this.broadcastAssistantMessage(deniedText, { requestId, target: ws });
           addMessage(conversation.id, { role: 'assistant', content: deniedText });
 
           if (taskCommitment) {
@@ -669,17 +676,18 @@ If the user wants to create a new project, tell them to use the Site Builder pag
         }
 
         if (pending && approvalDecision === null) {
-          this.pendingFastApprovals.delete(channel);
+          if (ws) this.pendingFastApprovals.delete(ws);
         }
 
         const approvalRequest = this.agentService.getFastModeApprovalRequest(text);
-        if (approvalRequest) {
-          this.pendingFastApprovals.set(channel, {
+        if (approvalRequest && ws) {
+          this.pendingFastApprovals.set(ws, {
             ...approvalRequest,
             createdAt: Date.now(),
           });
           this.broadcastAssistantMessage(approvalRequest.promptText, {
             requestId,
+            target: ws,
             approvalPrompt: {
               kind: approvalRequest.kind,
               label: approvalRequest.kind === 'delegate'
@@ -805,7 +813,7 @@ If the user wants to create a new project, tell them to use the Site Builder pag
 
       const followupPrompt = maybeCreateUserProfileFollowupPrompt();
       if (followupPrompt) {
-        this.broadcastAssistantMessage(followupPrompt);
+        this.broadcastAssistantMessage(followupPrompt, ws ? { target: ws } : undefined);
         addMessage(conversation.id, { role: 'assistant', content: followupPrompt });
       }
 

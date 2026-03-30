@@ -489,12 +489,7 @@ export async function startDaemon(userConfig?: Partial<DaemonConfig>): Promise<v
       sidecarManager,
     };
     const publicOrigin = parsePublicOrigin(jarvisConfig.daemon.public_url, jarvisConfig.daemon.port);
-    const publicOriginUrl = new URL(publicOrigin);
-    setCorsOrigin(
-      publicOriginUrl.port ? Number(publicOriginUrl.port) : jarvisConfig.daemon.port,
-      publicOriginUrl.hostname,
-      publicOriginUrl.protocol.replace(':', ''),
-    );
+    setCorsOrigin(publicOrigin);
     wsService.setCorsOrigin(publicOrigin);
     const apiRoutes = createApiRoutes(apiContext);
     wsService.setApiRoutes(apiRoutes);
