@@ -52,6 +52,8 @@ import { getRecentObservations } from '../vault/observations.ts';
 import { getRecentConversation } from '../vault/conversations.ts';
 import { extractAndStore } from '../vault/extractor.ts';
 import { getKnowledgeForMessage } from '../vault/retrieval.ts';
+import { formatUserProfileForPrompt } from '../user/profile.ts';
+import { getUserProfile } from '../vault/user-profile.ts';
 import type { ResearchQueue } from './research-queue.ts';
 import type { IAgentService } from './agent-service-interface.ts';
 import type { AuthorityEngine } from '../authority/engine.ts';
@@ -801,10 +803,26 @@ export class AgentService implements Service, IAgentService {
     } catch { /* ignore */ }
 
     const context: PromptContext = {
+      userName: this.config.user?.name || undefined,
       currentTime: new Date().toISOString(),
       availableSpecialists: this.specialistListText || undefined,
       hasSidecars,
     };
+
+    try {
+      const profile = getUserProfile();
+      const preferredName = profile?.answers.preferred_name?.trim();
+      if (preferredName) {
+        context.userName = preferredName;
+      }
+
+      const profileContext = formatUserProfileForPrompt(profile);
+      if (profileContext) {
+        context.userProfile = profileContext;
+      }
+    } catch (err) {
+      console.error('[AgentService] Error loading user profile:', err);
+    }
 
     // Retrieve relevant knowledge from vault based on user message
     if (userMessage) {
