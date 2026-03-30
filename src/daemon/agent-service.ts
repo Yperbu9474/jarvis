@@ -298,7 +298,7 @@ export class AgentService implements Service, IAgentService {
     stream: AsyncIterable<LLMStreamEvent>;
     onComplete: (fullText: string) => Promise<void>;
   } {
-    const systemPrompt = this.buildFastSystemPrompt(channel);
+    const systemPrompt = this.buildFastSystemPrompt(channel, text);
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       ...this.getRecentChatMessages(channel, text),
@@ -318,6 +318,10 @@ export class AgentService implements Service, IAgentService {
     };
 
     return { stream, onComplete };
+  }
+
+  getFastModeApprovalRequest(text: string): FastModeApprovalRequest | null {
+    return this.classifyFastModeApproval(text);
   }
 
   async handleFastModeTurn(text: string, channel: string = 'websocket'): Promise<FastModeDecision> {
@@ -565,14 +569,14 @@ export class AgentService implements Service, IAgentService {
     return `${rolePrompt}\n\n${personalityPrompt}`;
   }
 
-  private buildFastSystemPrompt(channel: string): string {
+  private buildFastSystemPrompt(channel: string, userMessage?: string): string {
     if (!this.role) return '';
 
     const personality = this.personality ?? getPersonality();
     const channelPersonality = getChannelPersonality(personality, channel);
     const personalityPrompt = personalityToPrompt(channelPersonality);
-
-    return [
+    const context = this.buildPromptContext(userMessage);
+    const sections: string[] = [
       `You are ${this.role.name}. ${this.role.description}`,
       '',
       '# Fast Chat Mode',
@@ -586,9 +590,159 @@ export class AgentService implements Service, IAgentService {
       `Tone: ${this.role.communication_style.tone}.`,
       `Verbosity: ${this.role.communication_style.verbosity}.`,
       `Formality: ${this.role.communication_style.formality}.`,
-      '',
-      personalityPrompt,
-    ].join('\n');
+    ];
+
+    if (context.userName || context.currentTime || context.knowledgeContext) {
+      sections.push('', '# Current Context');
+      if (context.userName) sections.push(`User: ${context.userName}`);
+      if (context.currentTime) sections.push(`Time: ${context.currentTime}`);
+      if (context.knowledgeContext) {
+        sections.push('', '## Relevant Knowledge');
+        sections.push(context.knowledgeContext);
+      }
+    }
+
+    sections.push('', personalityPrompt);
+    return sections.join('\n');
+  }
+
+  private classifyFastModeApproval(text: string): FastModeApprovalRequest | null {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+
+    const lower = trimmed.toLowerCase();
+
+    const delegate = this.classifyFastModeDelegation(trimmed, lower);
+    if (delegate) return delegate;
+
+    const toolRequest = this.classifyFastModeTool(trimmed, lower);
+    if (toolRequest) return toolRequest;
+
+    return null;
+  }
+
+  private classifyFastModeDelegation(text: string, lower: string): FastModeApprovalRequest | null {
+    const specialistChecks: Array<{
+      specialistName: string;
+      reason: string;
+      patterns: RegExp[];
+    }> = [
+      {
+        specialistName: 'software-engineer',
+        reason: 'This looks like a coding or debugging task that benefits from the software engineer specialist.',
+        patterns: [/\b(implement|fix|debug|refactor|write code|edit code|patch|bug|compile|test suite|typescript|javascript|python)\b/i],
+      },
+      {
+        specialistName: 'research-analyst',
+        reason: 'This looks like a deeper research task that benefits from the research analyst specialist.',
+        patterns: [/\b(research|investigate|look into this deeply|dig into|compare options|find sources)\b/i],
+      },
+      {
+        specialistName: 'data-analyst',
+        reason: 'This looks like a data analysis task that benefits from the data analyst specialist.',
+        patterns: [/\b(csv|spreadsheet|dataset|analyze data|metrics|chart|dashboard data)\b/i],
+      },
+      {
+        specialistName: 'content-writer',
+        reason: 'This looks like a writing task that benefits from the content writer specialist.',
+        patterns: [/\b(write a post|draft article|blog post|newsletter|ad copy|landing page copy)\b/i],
+      },
+    ];
+
+    const explicitlyRequestsDelegation = /\b(delegate|delegation|specialist|hand this off|have someone else do this)\b/i.test(lower);
+
+    for (const candidate of specialistChecks) {
+      if (!explicitlyRequestsDelegation && !candidate.patterns.some((pattern) => pattern.test(text))) {
+        continue;
+      }
+      if (!this.specialists.has(candidate.specialistName)) {
+        continue;
+      }
+      return {
+        kind: 'delegate',
+        requestText: text,
+        toolName: 'delegate_task',
+        specialistName: candidate.specialistName,
+        delegatedTask: text,
+        reason: candidate.reason,
+        promptText: `This is better handled by specialist \`${candidate.specialistName}\`.\n\nReason: ${candidate.reason}\n\nAllow JARVIS to delegate this task?`,
+      };
+    }
+
+    return null;
+  }
+
+  private classifyFastModeTool(text: string, lower: string): FastModeApprovalRequest | null {
+    const checks: Array<{ toolName: string; reason: string; patterns: RegExp[] }> = [
+      {
+        toolName: 'run_command',
+        reason: 'This request needs terminal execution.',
+        patterns: [/\b(run|execute|terminal|shell|command|cmd|bash|powershell)\b/i],
+      },
+      {
+        toolName: 'read_file',
+        reason: 'This request needs reading a file from disk.',
+        patterns: [/\b(read|open|show|view|cat|check)\b.*\b(file|config|log|source|code|path)\b/i],
+      },
+      {
+        toolName: 'write_file',
+        reason: 'This request needs editing or creating a file.',
+        patterns: [/\b(write|edit|modify|update|change|append|create)\b.*\b(file|config|script|document|code)\b/i],
+      },
+      {
+        toolName: 'list_directory',
+        reason: 'This request needs listing a directory or folder.',
+        patterns: [/\b(list|show|check)\b.*\b(directory|folder|files|contents)\b/i],
+      },
+      {
+        toolName: 'browser_navigate',
+        reason: 'This request needs opening or checking a website.',
+        patterns: [/\b(open|visit|navigate|go to|browse)\b.*\b(site|website|page|url|link)\b/i, /\bhttps?:\/\//i, /\bwww\./i],
+      },
+      {
+        toolName: 'capture_screen',
+        reason: 'This request needs a screenshot or screen capture.',
+        patterns: [/\b(screenshot|screen capture|capture the screen|what is on my screen)\b/i],
+      },
+      {
+        toolName: 'get_system_info',
+        reason: 'This request needs live system information.',
+        patterns: [/\b(system info|system information|cpu|memory|ram|disk usage|os version|specs)\b/i],
+      },
+      {
+        toolName: 'get_clipboard',
+        reason: 'This request needs reading the clipboard.',
+        patterns: [/\b(clipboard|copied text|what did i copy)\b/i],
+      },
+      {
+        toolName: 'set_clipboard',
+        reason: 'This request needs writing to the clipboard.',
+        patterns: [/\b(copy this|put .* clipboard|set clipboard)\b/i],
+      },
+    ];
+
+    for (const candidate of checks) {
+      if (!candidate.patterns.some((pattern) => pattern.test(text))) {
+        continue;
+      }
+      if (!this.orchestrator.getToolRegistry()?.get(candidate.toolName)) {
+        continue;
+      }
+      return {
+        kind: 'tool',
+        requestText: text,
+        toolName: candidate.toolName,
+        reason: candidate.reason,
+        promptText: `This needs the \`${candidate.toolName}\` tool.\n\nReason: ${candidate.reason}\n\nAllow JARVIS to use \`${candidate.toolName}\` just for this request?`,
+      };
+    }
+
+    const probablyActionRequest = /\b(check|look up|find|search|inspect|open|show|read|write|edit|run|list|browse|visit|click|type)\b/i.test(lower);
+    if (!probablyActionRequest) {
+      return null;
+    }
+
+    return null;
   }
 
   private buildFastPlannerPrompt(channel: string): string {

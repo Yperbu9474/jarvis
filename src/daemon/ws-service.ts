@@ -585,39 +585,38 @@ export class WebSocketService implements Service {
           this.pendingFastApprovals.delete(channel);
         }
 
-        const decision = await this.agentService.handleFastModeTurn(text, channel);
-        if (decision.kind === 'reply') {
-          this.broadcastAssistantMessage(decision.response, { requestId });
-          addMessage(conversation.id, { role: 'assistant', content: decision.response });
-          this.agentService.finalizeFastModeReply(text, decision.response, channel).catch((err) =>
-            console.error('[WSService] Fast mode finalize error:', err)
-          );
+        const approvalRequest = this.agentService.getFastModeApprovalRequest(text);
+        if (approvalRequest) {
+          this.pendingFastApprovals.set(channel, {
+            ...approvalRequest,
+            createdAt: Date.now(),
+          });
+          this.broadcastAssistantMessage(approvalRequest.promptText, {
+            requestId,
+            approvalPrompt: {
+              kind: approvalRequest.kind,
+              label: approvalRequest.kind === 'delegate'
+                ? `Delegate to ${approvalRequest.specialistName}`
+                : `Use ${approvalRequest.toolName}`,
+            },
+          });
+          addMessage(conversation.id, { role: 'assistant', content: approvalRequest.promptText });
 
           if (taskCommitment) {
-            const updated = updateCommitmentStatus(taskCommitment.id, 'completed', decision.response.slice(0, 200));
+            const updated = updateCommitmentStatus(taskCommitment.id, 'completed', approvalRequest.promptText);
             if (updated) this.broadcastTaskUpdate(updated, 'updated');
             this.activeTaskId = null;
           }
           return;
         }
 
-        this.pendingFastApprovals.set(channel, {
-          ...decision.request,
-          createdAt: Date.now(),
-        });
-        this.broadcastAssistantMessage(decision.request.promptText, {
-          requestId,
-          approvalPrompt: {
-            kind: decision.request.kind,
-            label: decision.request.kind === 'delegate'
-              ? `Delegate to ${decision.request.specialistName}`
-              : `Use ${decision.request.toolName}`,
-          },
-        });
-        addMessage(conversation.id, { role: 'assistant', content: decision.request.promptText });
+        const { stream, onComplete } = this.agentService.streamFastMessage(text, channel);
+        const fullText = await this.streamRelay.relayStream(stream, requestId);
+        addMessage(conversation.id, { role: 'assistant', content: fullText });
+        await onComplete(fullText);
 
         if (taskCommitment) {
-          const updated = updateCommitmentStatus(taskCommitment.id, 'completed', decision.request.promptText);
+          const updated = updateCommitmentStatus(taskCommitment.id, 'completed', fullText.slice(0, 200));
           if (updated) this.broadcastTaskUpdate(updated, 'updated');
           this.activeTaskId = null;
         }
