@@ -49,7 +49,7 @@ import {
 import { getDueCommitments, getUpcoming } from '../vault/commitments.ts';
 import { findContent } from '../vault/content-pipeline.ts';
 import { getRecentObservations } from '../vault/observations.ts';
-import { getMessages, getRecentConversation } from '../vault/conversations.ts';
+import { getRecentConversation } from '../vault/conversations.ts';
 import { extractAndStore } from '../vault/extractor.ts';
 import { getKnowledgeForMessage } from '../vault/retrieval.ts';
 import type { ResearchQueue } from './research-queue.ts';
@@ -649,7 +649,7 @@ export class AgentService implements Service, IAgentService {
         return [{ role: 'user', content: currentText }];
       }
 
-      const history = getMessages(recent.conversation.id, { limit: 12 })
+      const history = recent.messages
         .filter((m) => m.role === 'user' || m.role === 'assistant')
         .map((m) => ({ role: m.role, content: m.content }))
         .slice(-12) as LLMMessage[];
