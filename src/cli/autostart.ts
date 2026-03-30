@@ -1,9 +1,9 @@
 /**
  * Autostart Setup for J.A.R.V.I.S.
  *
- * Installs/uninstalls daemon autostart on system boot:
+ * Installs/uninstalls keepalive daemon autostart:
  * - Linux: systemd user service
- * - macOS: launchd plist
+ * - macOS: launchd user agent
  */
 
 import { join } from 'node:path';
@@ -23,6 +23,30 @@ function getBunPath(): string {
 function getJarvisPath(): string {
   // When installed globally, import.meta.dir points to the package
   return join(import.meta.dir, '../../bin/jarvis.ts');
+}
+
+function canUseSystemdUserService(): boolean {
+  try {
+    const version = Bun.spawnSync(['systemctl', '--user', '--version']);
+    if (version.exitCode !== 0) return false;
+
+    const state = Bun.spawnSync(['systemctl', '--user', 'is-system-running'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+
+    // "running" exits 0, degraded/offline can still manage units and usually exits non-zero.
+    // We only need the user manager to be reachable, not fully healthy.
+    if (state.exitCode === 0) return true;
+
+    const env = Bun.spawnSync(['systemctl', '--user', 'show-environment'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    return env.exitCode === 0;
+  } catch {
+    return false;
+  }
 }
 
 // ── systemd (Linux) ──────────────────────────────────────────────────
@@ -202,7 +226,7 @@ async function installLaunchd(): Promise<boolean> {
     }
 
     printOk(`Installed launchd plist: ${LAUNCHD_PLIST}`);
-    printOk('Service will start on login.');
+    printOk('Service will restart automatically and stay running after the terminal closes.');
     return true;
   } catch (err) {
     printErr(`Failed to install launchd plist: ${err}`);
@@ -320,11 +344,22 @@ export function isAutostartInstalled(): boolean {
 }
 
 /**
+ * Check whether the current platform can use the keepalive manager.
+ * Linux and WSL2 require a reachable user systemd instance.
+ */
+export function isAutostartSupported(): boolean {
+  if (process.platform === 'darwin') {
+    return true;
+  }
+  return canUseSystemdUserService();
+}
+
+/**
  * Get the name of the autostart mechanism for the current platform.
  */
 export function getAutostartName(): string {
   if (process.platform === 'darwin') {
-    return 'launchd (Login Item)';
+    return 'launchd (User Agent)';
   }
   return 'systemd (User Service)';
 }

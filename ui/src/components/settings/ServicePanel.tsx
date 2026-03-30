@@ -42,7 +42,9 @@ export function ServicePanel() {
       <div style={headerRowStyle}>
         <div>
           <h3 style={headerStyle}>24/7 Service</h3>
-          <div style={subtleStyle}>Manage the systemd keepalive service that keeps JARVIS running after the terminal closes.</div>
+          <div style={subtleStyle}>
+            Manage the keepalive service that keeps JARVIS running after the terminal closes.
+          </div>
         </div>
         <span
           style={{
@@ -61,7 +63,7 @@ export function ServicePanel() {
         <InfoRow label="Platform" value={data.platform} />
         <InfoRow
           label="Restart"
-          value={data.restart_supported ? "Available" : data.keepalive_supported ? "Install keepalive first" : "Linux only"}
+          value={data.restart_supported ? "Available" : data.keepalive_supported ? "Install keepalive first" : "Not supported"}
         />
       </div>
 

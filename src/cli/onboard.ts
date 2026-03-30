@@ -15,7 +15,7 @@ import {
 } from './helpers.ts';
 import { DEFAULT_CONFIG, type JarvisConfig } from '../config/types.ts';
 import { loadConfig, saveConfig } from '../config/loader.ts';
-import { installAutostart, startAutostartService, getAutostartName } from './autostart.ts';
+import { installAutostart, startAutostartService, getAutostartName, isAutostartSupported } from './autostart.ts';
 import { runDependencyCheck } from './deps.ts';
 import { initDatabase, closeDb } from '../vault/schema.ts';
 import { saveUserProfile } from '../vault/user-profile.ts';
@@ -586,19 +586,25 @@ export async function runOnboard(): Promise<void> {
   printStep(10, TOTAL_STEPS, 'Keepalive');
   const platform = detectPlatform();
   let enableKeepalive = false;
+  const keepaliveSupported = isAutostartSupported();
 
-  if (platform === 'wsl') {
-    printInfo('WSL detected. Keepalive mode is not supported in WSL.');
+  if (!keepaliveSupported) {
+    if (platform === 'wsl') {
+      printInfo('WSL2 detected, but the user systemd service manager is not available in this session.');
+      printInfo('Enable systemd in WSL, then rerun onboard to use 24/7 keepalive mode.');
+    } else {
+      printInfo('Keepalive mode is not supported in this environment.');
+    }
     printInfo('Start JARVIS manually with: jarvis start');
   } else {
-    if (process.platform === 'linux') {
-      console.log('  Keepalive mode uses a user-level systemd service to keep JARVIS running 24/7,');
-      console.log('  automatically restarting it and keeping it alive after you close the terminal.\n');
-      console.log(`  Service manager: ${c.bold(getAutostartName())}\n`);
+    if (process.platform === 'linux' || process.platform === 'darwin') {
+      const platformHint = platform === 'wsl' ? ' on WSL2' : '';
+      console.log(`  Keepalive mode uses ${c.bold(getAutostartName())}${platformHint} to keep JARVIS running`);
+      console.log('  after you close the terminal, with automatic restart if the service exits.\n');
       enableKeepalive = await askYesNo('Activate JARVIS keepalive mode?', false);
     } else {
       console.log(`  Autostart mechanism: ${c.bold(getAutostartName())}\n`);
-      enableKeepalive = await askYesNo('Start JARVIS automatically on login?', false);
+      enableKeepalive = await askYesNo('Start JARVIS automatically?', false);
     }
   }
 
@@ -696,7 +702,7 @@ export async function runOnboard(): Promise<void> {
       const installed = await installAutostart();
       if (installed) {
         const started = await startAutostartService();
-        if (started && process.platform === 'linux') {
+        if (started && (process.platform === 'linux' || process.platform === 'darwin')) {
           printInfo('You can restart the 24/7 service later from Settings > General.');
         }
       }
@@ -722,7 +728,7 @@ export async function runOnboard(): Promise<void> {
   } else {
     if (keepaliveActive) {
       console.log(c.dim('\nJARVIS keepalive mode is managing the daemon.\n'));
-      if (process.platform === 'linux') {
+      if (process.platform === 'linux' || process.platform === 'darwin') {
         console.log(c.dim('Restart it later from Settings > General.\n'));
       }
     } else {

@@ -102,6 +102,7 @@ import type { SuggestionType } from '../awareness/types.ts';
 import {
   getAutostartName,
   isAutostartInstalled,
+  isAutostartSupported,
   scheduleAutostartRestart,
 } from '../cli/autostart.ts';
 
@@ -647,32 +648,32 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
     '/api/system/autostart': {
       GET: () => {
         const installed = isAutostartInstalled();
-        const isLinux = process.platform === 'linux';
+        const supportsKeepalive = isAutostartSupported();
         return json({
           platform: process.platform,
           manager: getAutostartName(),
           installed,
-          keepalive_supported: isLinux,
-          restart_supported: isLinux && installed,
+          keepalive_supported: supportsKeepalive,
+          restart_supported: supportsKeepalive && installed,
         });
       },
     },
 
     '/api/system/autostart/restart': {
       POST: () => {
-        if (process.platform !== 'linux') {
-          return error('24/7 restart is only supported for the Linux systemd service on this screen.', 400);
+        if (!isAutostartSupported()) {
+          return error('24/7 restart is only supported for the configured keepalive service on this platform.', 400);
         }
         if (!isAutostartInstalled()) {
           return error('JARVIS keepalive mode is not installed yet.', 400);
         }
         const scheduled = scheduleAutostartRestart();
         if (!scheduled) {
-          return error('Failed to schedule systemd restart.');
+          return error('Failed to schedule keepalive service restart.');
         }
         return json({
           ok: true,
-          message: 'Restarting the JARVIS 24/7 systemd service.',
+          message: `Restarting the JARVIS 24/7 ${getAutostartName()} service.`,
         });
       },
     },
