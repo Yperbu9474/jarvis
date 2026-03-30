@@ -57,6 +57,26 @@ describe('Vault — User Profile', () => {
     expect(factMap.get('preferred_name')).toBe('Alex');
     expect(factMap.get('interests')).toBe('AI, cars');
     expect(factMap.get('location_timezone')).toBe('Miami / America/New_York');
+    expect(factMap.get('name')).toBe('Alex');
+  });
+
+  test('save derives alias facts from free-form profile answers', () => {
+    initDatabase(':memory:');
+
+    saveUserProfile({
+      preferred_name: 'Sebastian',
+      important_people: 'im Sebastian but my common alias/username is Crayon.',
+    });
+
+    const entities = findEntities({ name: 'Sebastian' });
+    expect(entities).toHaveLength(1);
+
+    const facts = findFacts({ subject_id: entities[0]!.id });
+    const aliases = facts
+      .filter((fact) => fact.predicate === 'alias' || fact.predicate === 'username')
+      .map((fact) => fact.object);
+
+    expect(aliases).toContain('Crayon');
   });
 
   test('prompt formatter includes answered fields only', () => {

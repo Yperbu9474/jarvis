@@ -98,6 +98,13 @@ function syncUserProfileKnowledge(profile: UserProfileRecord): void {
       source: USER_PROFILE_VAULT_SOURCE,
     });
   }
+
+  for (const fact of getDerivedUserProfileFacts(profile)) {
+    createFact(entity.id, fact.predicate, fact.object, {
+      confidence: 1,
+      source: USER_PROFILE_VAULT_SOURCE,
+    });
+  }
 }
 
 function clearUserProfileKnowledge(): void {
@@ -107,4 +114,63 @@ function clearUserProfileKnowledge(): void {
   for (const row of rows) {
     db.prepare('DELETE FROM entities WHERE id = ?').run(row.id);
   }
+}
+
+function getDerivedUserProfileFacts(profile: UserProfileRecord): Array<{ predicate: string; object: string }> {
+  const facts: Array<{ predicate: string; object: string }> = [];
+  const seen = new Set<string>();
+
+  const preferredName = profile.answers.preferred_name?.trim();
+  if (preferredName) {
+    pushFact(facts, seen, 'name', preferredName);
+  }
+
+  const aliasSources = [
+    profile.answers.important_people,
+    profile.answers.anything_else,
+    profile.answers.work_role,
+    profile.answers.communication_preferences,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+  for (const source of aliasSources) {
+    for (const alias of extractAliases(source)) {
+      pushFact(facts, seen, 'alias', alias);
+      pushFact(facts, seen, 'username', alias);
+    }
+  }
+
+  return facts;
+}
+
+function pushFact(
+  facts: Array<{ predicate: string; object: string }>,
+  seen: Set<string>,
+  predicate: string,
+  object: string,
+): void {
+  const value = object.trim();
+  if (!value) return;
+  const key = `${predicate}\u0000${value.toLowerCase()}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  facts.push({ predicate, object: value });
+}
+
+function extractAliases(text: string): string[] {
+  const aliases = new Set<string>();
+  const patterns = [
+    /\b(?:alias|username|user\s*name|handle)\s*(?:is|=|:)?\s*["']?([A-Za-z0-9._-]{2,32})["']?/gi,
+    /\bgo by\s+["']?([A-Za-z0-9._-]{2,32})["']?/gi,
+    /\bcalled\s+["']?([A-Za-z0-9._-]{2,32})["']?/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      const alias = match[1]?.trim().replace(/[.,!?;:]+$/g, '');
+      if (alias) aliases.add(alias);
+    }
+  }
+
+  return [...aliases];
 }
