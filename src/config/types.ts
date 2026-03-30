@@ -149,6 +149,8 @@ export type JarvisConfig = {
   llm: {
     primary: string;  // provider name
     fallback: string[];
+    /** If true, LLM calls are only triggered by explicit user messages (disables autonomous/proactive loops). */
+    user_driven_only?: boolean;
     anthropic?: { api_key: string; model?: string };
     openai?: { api_key: string; model?: string };
     groq?: { api_key: string; model?: string };
@@ -217,6 +219,7 @@ export const DEFAULT_CONFIG: JarvisConfig = {
   llm: {
     primary: 'anthropic',
     fallback: ['openai', 'ollama'],
+    user_driven_only: false,
     anthropic: {
       api_key: '',
       model: 'claude-sonnet-4-6',

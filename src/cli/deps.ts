@@ -352,7 +352,7 @@ export async function setupGoogleOAuth(config: any): Promise<boolean> {
         },
       });
     } catch (err) {
-      printErr(`Could not start OAuth callback server on port 3142 (port in use?)`);
+      printErr('Could not start OAuth callback server on port 3142 (port in use?)');
       printInfo('Stop the JARVIS daemon first, or run later with: bun run setup:google');
       resolve(false);
       return;

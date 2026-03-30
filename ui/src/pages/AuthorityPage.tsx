@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import "../styles/authority.css";
 
-const API = `http://${window.location.hostname}:3142`;
+const API = window.location.origin;
 
 type ApprovalRequest = {
   id: string;

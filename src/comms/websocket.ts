@@ -108,6 +108,10 @@ export class WebSocketServer {
     this.publicDir = dir;
   }
 
+  setCorsOrigin(origin: string): void {
+    this.corsOrigin = origin;
+  }
+
   start(): void {
     if (this.server) {
       console.warn('[WebSocketServer] Server already running');
