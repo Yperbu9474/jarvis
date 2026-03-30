@@ -397,7 +397,7 @@ export function useWebSocket() {
   }, [connect]);
 
   const sendMessage = useCallback(
-    (text: string) => {
+    (text: string, opts?: { fastMode?: boolean }) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
       const id = crypto.randomUUID();
@@ -416,7 +416,7 @@ export function useWebSocket() {
       // Send to server
       const msg: WSMessage = {
         type: "chat",
-        payload: { text },
+        payload: { text, ...(opts?.fastMode ? { fast_mode: true } : {}) },
         id,
         timestamp: Date.now(),
       };

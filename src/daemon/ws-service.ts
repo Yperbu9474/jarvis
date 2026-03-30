@@ -480,7 +480,7 @@ export class WebSocketService implements Service {
    * Auto-creates a task for non-trivial messages so the task board tracks agent work.
    */
   private async handleChat(msg: WSMessage, ws?: ServerWebSocket<unknown>): Promise<WSMessage | void> {
-    const payload = msg.payload as { text?: string; channel?: string };
+    const payload = msg.payload as { text?: string; channel?: string; fast_mode?: boolean };
     const text = payload?.text;
 
     if (!text) {
@@ -493,6 +493,7 @@ export class WebSocketService implements Service {
     }
 
     const channel = payload.channel ?? 'websocket';
+    const fastMode = payload.fast_mode === true;
     const requestId = msg.id ?? crypto.randomUUID();
 
     // Auto-create a task for non-trivial messages
@@ -520,7 +521,9 @@ export class WebSocketService implements Service {
       const conversation = getOrCreateConversation(channel);
       addMessage(conversation.id, { role: 'user', content: text });
 
-      const { stream, onComplete } = this.agentService.streamMessage(text, channel);
+      const { stream, onComplete } = fastMode
+        ? this.agentService.streamFastMessage(text, channel)
+        : this.agentService.streamMessage(text, channel);
 
       // Set up streaming TTS: speak sentences as they arrive
       const ttsActive = !!(this.ttsProvider && ws);

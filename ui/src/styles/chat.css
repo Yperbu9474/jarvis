@@ -38,6 +38,53 @@
   color: var(--text-1);
 }
 
+.chat-fast-toggle {
+  position: absolute;
+  right: 24px;
+  bottom: 108px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(12,12,18,0.78);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.22);
+  transition: all 160ms ease;
+}
+
+.chat-fast-toggle:hover {
+  color: var(--text-1);
+  border-color: rgba(255,255,255,0.14);
+}
+
+.chat-fast-toggle-active {
+  color: #D6FAE8;
+  border-color: rgba(52,211,153,0.24);
+  background: rgba(9,24,20,0.82);
+  box-shadow: 0 0 0 1px rgba(52,211,153,0.08), 0 14px 36px rgba(0,0,0,0.26);
+}
+
+.chat-fast-toggle-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  box-shadow: 0 0 0 6px rgba(255,255,255,0.04);
+}
+
+.chat-fast-toggle-active .chat-fast-toggle-dot {
+  background: var(--emerald);
+  box-shadow: 0 0 12px rgba(52,211,153,0.5), 0 0 0 6px rgba(52,211,153,0.08);
+}
+
 /* ================================================================
    KEYFRAMES
    ================================================================ */
@@ -748,6 +795,19 @@
   align-items: flex-end;
   max-width: 740px;
   width: 100%;
+}
+
+@media (max-width: 768px) {
+  .chat-fast-toggle {
+    right: 14px;
+    bottom: 96px;
+    padding: 9px 12px;
+    font-size: 11px;
+  }
+
+  .chat-input-area {
+    padding: 14px 16px 20px;
+  }
 }
 
 .chat-textarea {

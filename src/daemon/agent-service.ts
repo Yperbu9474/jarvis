@@ -49,12 +49,14 @@ import {
 import { getDueCommitments, getUpcoming } from '../vault/commitments.ts';
 import { findContent } from '../vault/content-pipeline.ts';
 import { getRecentObservations } from '../vault/observations.ts';
+import { getMessages, getRecentConversation } from '../vault/conversations.ts';
 import { extractAndStore } from '../vault/extractor.ts';
 import { getKnowledgeForMessage } from '../vault/retrieval.ts';
 import type { ResearchQueue } from './research-queue.ts';
 import type { IAgentService } from './agent-service-interface.ts';
 import type { AuthorityEngine } from '../authority/engine.ts';
 import { getSidecarManager } from '../actions/tools/sidecar-route.ts';
+import type { LLMMessage, LLMResponse } from '../llm/provider.ts';
 
 export class AgentService implements Service, IAgentService {
   name = 'agent';
@@ -260,6 +262,36 @@ export class AgentService implements Service, IAgentService {
   }
 
   /**
+   * Stream a message directly through the active LLM with no tools,
+   * no delegation, and minimal context for low-latency chat.
+   */
+  streamFastMessage(text: string, channel: string = 'websocket'): {
+    stream: AsyncIterable<LLMStreamEvent>;
+    onComplete: (fullText: string) => Promise<void>;
+  } {
+    const systemPrompt = this.buildFastSystemPrompt(channel);
+    const messages: LLMMessage[] = [
+      { role: 'system', content: systemPrompt },
+      ...this.getRecentChatMessages(channel, text),
+    ];
+
+    const stream = this.streamDirectLLM(messages);
+
+    const onComplete = async (fullText: string): Promise<void> => {
+      await Promise.allSettled([
+        this.extractKnowledge(text, fullText).catch((err) =>
+          console.error('[AgentService] Extraction error:', err instanceof Error ? err.message : err)
+        ),
+        this.learnFromInteraction(text, fullText, channel).catch((err) =>
+          console.error('[AgentService] Learning error:', err instanceof Error ? err.message : err)
+        ),
+      ]);
+    };
+
+    return { stream, onComplete };
+  }
+
+  /**
    * Non-streaming message handler. Returns full response string.
    */
   async handleMessage(text: string, channel: string = 'websocket'): Promise<string> {
@@ -443,6 +475,32 @@ export class AgentService implements Service, IAgentService {
     return `${rolePrompt}\n\n${personalityPrompt}`;
   }
 
+  private buildFastSystemPrompt(channel: string): string {
+    if (!this.role) return '';
+
+    const personality = this.personality ?? getPersonality();
+    const channelPersonality = getChannelPersonality(personality, channel);
+    const personalityPrompt = personalityToPrompt(channelPersonality);
+
+    return [
+      `You are ${this.role.name}. ${this.role.description}`,
+      '',
+      '# Fast Chat Mode',
+      'Answer directly and conversationally.',
+      'Do not use tools.',
+      'Do not delegate to specialists.',
+      'Do not plan multi-step actions unless the user explicitly asks.',
+      'Prefer a fast, clear answer over exhaustive reasoning.',
+      '',
+      '# Communication Style',
+      `Tone: ${this.role.communication_style.tone}.`,
+      `Verbosity: ${this.role.communication_style.verbosity}.`,
+      `Formality: ${this.role.communication_style.formality}.`,
+      '',
+      personalityPrompt,
+    ].join('\n');
+  }
+
   private buildHeartbeatPrompt(coalescedEvents?: string): string {
     if (!this.role) return '';
 
@@ -582,6 +640,67 @@ export class AgentService implements Service, IAgentService {
     }
 
     return context;
+  }
+
+  private getRecentChatMessages(channel: string, currentText: string): LLMMessage[] {
+    try {
+      const recent = getRecentConversation(channel);
+      if (!recent) {
+        return [{ role: 'user', content: currentText }];
+      }
+
+      const history = getMessages(recent.conversation.id, { limit: 12 })
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({ role: m.role, content: m.content }))
+        .slice(-12) as LLMMessage[];
+
+      if (
+        history.length === 0 ||
+        history[history.length - 1]?.role !== 'user' ||
+        history[history.length - 1]?.content !== currentText
+      ) {
+        history.push({ role: 'user', content: currentText });
+      }
+
+      return history;
+    } catch (err) {
+      console.error('[AgentService] Error loading fast chat history:', err);
+      return [{ role: 'user', content: currentText }];
+    }
+  }
+
+  private async *streamDirectLLM(messages: LLMMessage[]): AsyncIterable<LLMStreamEvent> {
+    let accumulatedText = '';
+    let doneResponse: LLMResponse | null = null;
+
+    for await (const event of this.llmManager.stream(messages)) {
+      if (event.type === 'text') {
+        accumulatedText += event.text;
+        yield event;
+      } else if (event.type === 'done') {
+        doneResponse = event.response;
+      } else if (event.type === 'error') {
+        yield event;
+        return;
+      }
+    }
+
+    const finalResponse = doneResponse ?? {
+      content: accumulatedText,
+      tool_calls: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      model: this.llmManager.getPrimary() || 'unknown',
+      finish_reason: 'stop' as const,
+    };
+
+    yield {
+      type: 'done',
+      response: {
+        ...finalResponse,
+        content: accumulatedText || finalResponse.content,
+        tool_calls: [],
+      },
+    };
   }
 
   private async extractKnowledge(userMessage: string, assistantResponse: string): Promise<void> {

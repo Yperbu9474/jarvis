@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import type { ChatMessage } from "../hooks/useWebSocket";
 import type { UseVoiceReturn } from "../hooks/useVoice";
 import { MessageList } from "../components/chat/MessageList";
@@ -8,11 +8,27 @@ import "../styles/chat.css";
 type ChatPageProps = {
   messages: ChatMessage[];
   isConnected: boolean;
-  sendMessage: (text: string) => void;
+  sendMessage: (text: string, opts?: { fastMode?: boolean }) => void;
   voice?: UseVoiceReturn;
 };
 
 export default function ChatPage({ messages, isConnected, sendMessage, voice }: ChatPageProps) {
+  const [fastMode, setFastMode] = useState(() => {
+    try {
+      return localStorage.getItem("jarvis.fastChatMode") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("jarvis.fastChatMode", String(fastMode));
+    } catch {
+      // ignore storage failures
+    }
+  }, [fastMode]);
+
   const voiceStatus = voice
     ? voice.voiceState === "speaking" || voice.ttsAudioPlaying
       ? "JARVIS is speaking..."
@@ -77,10 +93,21 @@ export default function ChatPage({ messages, isConnected, sendMessage, voice }: 
       {/* Messages */}
       <MessageList messages={messages} />
 
+      <button
+        className={`chat-fast-toggle ${fastMode ? "chat-fast-toggle-active" : ""}`}
+        type="button"
+        onClick={() => setFastMode((prev) => !prev)}
+        title={fastMode ? "Fast chat mode on" : "Fast chat mode off"}
+      >
+        <span className="chat-fast-toggle-dot" />
+        Fast Chat
+      </button>
+
       {/* Input */}
       <ChatInput
-        onSend={sendMessage}
+        onSend={(text) => sendMessage(text, { fastMode })}
         disabled={!isConnected}
+        fastMode={fastMode}
         voice={voice ? {
           voiceState: voice.voiceState,
           startRecording: voice.startRecording,
