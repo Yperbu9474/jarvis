@@ -7,7 +7,7 @@
 
 import type { ServerWebSocket } from 'bun';
 import type { Service, ServiceStatus } from './services.ts';
-import type { AgentService } from './agent-service.ts';
+import type { AgentService, FastModeApprovalRequest } from './agent-service.ts';
 import type { CommitmentExecutor } from './commitment-executor.ts';
 import type { ChannelService } from './channel-service.ts';
 import type { Commitment } from '../vault/commitments.ts';
@@ -26,6 +26,10 @@ type VoiceSession = {
   startedAt: number;
 };
 
+type PendingFastApproval = FastModeApprovalRequest & {
+  createdAt: number;
+};
+
 export class WebSocketService implements Service {
   name = 'websocket';
   private _status: ServiceStatus = 'stopped';
@@ -40,6 +44,7 @@ export class WebSocketService implements Service {
   private ttsProvider: TTSProvider | null = null;
   private sttProvider: STTProvider | null = null;
   private voiceSessions = new Map<ServerWebSocket<unknown>, VoiceSession>();
+  private pendingFastApprovals = new Map<string, PendingFastApproval>();
 
   constructor(port: number, agentService: AgentService) {
     this.port = port;
@@ -221,6 +226,26 @@ export class WebSocketService implements Service {
         action,
         task,
       },
+      timestamp: Date.now(),
+    };
+    this.wsServer.broadcast(message);
+  }
+
+  private broadcastAssistantMessage(
+    text: string,
+    opts?: {
+      requestId?: string;
+      approvalPrompt?: { kind: 'tool' | 'delegate'; label: string };
+    },
+  ): void {
+    const message: WSMessage = {
+      type: 'notification',
+      payload: {
+        source: 'assistant_message',
+        text,
+        approvalPrompt: opts?.approvalPrompt,
+      },
+      id: opts?.requestId,
       timestamp: Date.now(),
     };
     this.wsServer.broadcast(message);
@@ -521,9 +546,85 @@ export class WebSocketService implements Service {
       const conversation = getOrCreateConversation(channel);
       addMessage(conversation.id, { role: 'user', content: text });
 
-      const { stream, onComplete } = fastMode
-        ? this.agentService.streamFastMessage(text, channel)
-        : this.agentService.streamMessage(text, channel);
+      if (fastMode) {
+        const pending = this.pendingFastApprovals.get(channel);
+        const approvalDecision = pending ? parseFastApprovalDecision(text) : null;
+
+        if (pending && approvalDecision === 'approve') {
+          this.pendingFastApprovals.delete(channel);
+          const { stream, onComplete } = this.agentService.streamFastApprovedAction(pending, channel);
+          const fullText = await this.streamRelay.relayStream(stream, requestId);
+          addMessage(conversation.id, { role: 'assistant', content: fullText });
+          await onComplete(fullText);
+
+          if (taskCommitment) {
+            const updated = updateCommitmentStatus(taskCommitment.id, 'completed', fullText.slice(0, 200));
+            if (updated) this.broadcastTaskUpdate(updated, 'updated');
+            this.activeTaskId = null;
+          }
+          return;
+        }
+
+        if (pending && approvalDecision === 'deny') {
+          this.pendingFastApprovals.delete(channel);
+          const deniedText = pending.kind === 'delegate'
+            ? `Okay. I won't delegate this task to \`${pending.specialistName}\`.`
+            : `Okay. I won't use the \`${pending.toolName}\` tool for this request.`;
+          this.broadcastAssistantMessage(deniedText, { requestId });
+          addMessage(conversation.id, { role: 'assistant', content: deniedText });
+
+          if (taskCommitment) {
+            const updated = updateCommitmentStatus(taskCommitment.id, 'completed', deniedText);
+            if (updated) this.broadcastTaskUpdate(updated, 'updated');
+            this.activeTaskId = null;
+          }
+          return;
+        }
+
+        if (pending && approvalDecision === null) {
+          this.pendingFastApprovals.delete(channel);
+        }
+
+        const decision = await this.agentService.handleFastModeTurn(text, channel);
+        if (decision.kind === 'reply') {
+          this.broadcastAssistantMessage(decision.response, { requestId });
+          addMessage(conversation.id, { role: 'assistant', content: decision.response });
+          this.agentService.finalizeFastModeReply(text, decision.response, channel).catch((err) =>
+            console.error('[WSService] Fast mode finalize error:', err)
+          );
+
+          if (taskCommitment) {
+            const updated = updateCommitmentStatus(taskCommitment.id, 'completed', decision.response.slice(0, 200));
+            if (updated) this.broadcastTaskUpdate(updated, 'updated');
+            this.activeTaskId = null;
+          }
+          return;
+        }
+
+        this.pendingFastApprovals.set(channel, {
+          ...decision.request,
+          createdAt: Date.now(),
+        });
+        this.broadcastAssistantMessage(decision.request.promptText, {
+          requestId,
+          approvalPrompt: {
+            kind: decision.request.kind,
+            label: decision.request.kind === 'delegate'
+              ? `Delegate to ${decision.request.specialistName}`
+              : `Use ${decision.request.toolName}`,
+          },
+        });
+        addMessage(conversation.id, { role: 'assistant', content: decision.request.promptText });
+
+        if (taskCommitment) {
+          const updated = updateCommitmentStatus(taskCommitment.id, 'completed', decision.request.promptText);
+          if (updated) this.broadcastTaskUpdate(updated, 'updated');
+          this.activeTaskId = null;
+        }
+        return;
+      }
+
+      const { stream, onComplete } = this.agentService.streamMessage(text, channel);
 
       // Set up streaming TTS: speak sentences as they arrive
       const ttsActive = !!(this.ttsProvider && ws);
@@ -789,4 +890,15 @@ export class WebSocketService implements Service {
       timestamp: Date.now(),
     };
   }
+}
+
+function parseFastApprovalDecision(text: string): 'approve' | 'deny' | null {
+  const normalized = text.trim().toLowerCase();
+  if (['y', 'yes', 'allow', 'approve', 'do it', 'go ahead', 'ok', 'okay'].includes(normalized)) {
+    return 'approve';
+  }
+  if (['n', 'no', 'deny', 'cancel', 'stop', 'not now'].includes(normalized)) {
+    return 'deny';
+  }
+  return null;
 }

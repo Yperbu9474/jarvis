@@ -91,7 +91,10 @@ export default function ChatPage({ messages, isConnected, sendMessage, voice }: 
       )}
 
       {/* Messages */}
-      <MessageList messages={messages} />
+      <MessageList
+        messages={messages}
+        onApprovalAction={(decision) => sendMessage(decision === "approve" ? "yes" : "no", { fastMode: true })}
+      />
 
       <button
         className={`chat-fast-toggle ${fastMode ? "chat-fast-toggle-active" : ""}`}
