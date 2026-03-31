@@ -41,6 +41,12 @@ import {
   addAttachment, getAttachment, getAttachments, deleteAttachment,
   CONTENT_STAGES, CONTENT_TYPES,
 } from '../vault/content-pipeline.ts';
+import {
+  assignPersistentAgentTask,
+  listPersistentAgents,
+  spawnPersistentAgent,
+  terminatePersistentAgent,
+} from '../actions/tools/agents.ts';
 
 import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -536,8 +542,96 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
     '/api/agents': {
       GET: () => {
         const orchestrator = ctx.agentService.getOrchestrator();
-        const agents = orchestrator.getAllAgents().map((a) => a.toJSON());
+        const taskManager = ctx.agentService.getTaskManager();
+        const agents = orchestrator.getAllAgents().map((a) => {
+          const latestTask = taskManager?.getAgentTask(a.id);
+          return {
+            ...a.toJSON(),
+            busy: taskManager?.isAgentBusy(a.id) ?? false,
+            latest_task: latestTask ? {
+              id: latestTask.id,
+              status: latestTask.status,
+              task: latestTask.task,
+              started_at: latestTask.startedAt,
+              completed_at: latestTask.completedAt,
+            } : null,
+          };
+        });
         return json(agents);
+      },
+      POST: async (req: Request) => {
+        try {
+          const taskManager = ctx.agentService.getTaskManager();
+          if (!taskManager) return error('Persistent agents are not available.', 503);
+
+          const body = await req.json() as { specialist?: string; task?: string; context?: string };
+          const deps = {
+            orchestrator: ctx.agentService.getOrchestrator(),
+            llmManager: ctx.agentService.getLLMManager(),
+            specialists: ctx.agentService.getSpecialists(),
+            taskManager,
+          };
+
+          const spawned = spawnPersistentAgent(deps, body.specialist ?? '');
+          let assignment: Awaited<ReturnType<typeof assignPersistentAgentTask>> | null = null;
+
+          if (body.task?.trim()) {
+            assignment = await assignPersistentAgentTask(deps, {
+              agentId: spawned.agent.id,
+              task: body.task.trim(),
+              context: body.context?.trim(),
+            });
+          }
+
+          const latestTask = taskManager.getAgentTask(spawned.agent.id);
+          return json({
+            ...spawned.agent.toJSON(),
+            busy: taskManager.isAgentBusy(spawned.agent.id),
+            latest_task: latestTask ? {
+              id: latestTask.id,
+              status: latestTask.status,
+              task: latestTask.task,
+              started_at: latestTask.startedAt,
+              completed_at: latestTask.completedAt,
+            } : null,
+            spawned: spawned.summary,
+            assignment,
+          }, 201);
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
+      },
+    },
+
+    '/api/agents/specialists': {
+      GET: () => {
+        const specialists = Array.from(ctx.agentService.getSpecialists().values()).map((role) => ({
+          id: role.id,
+          name: role.name,
+          description: role.description,
+          authority_level: role.authority_level,
+          tools: role.tools,
+        }));
+        return json({ specialists });
+      },
+    },
+
+    '/api/agents/:id': {
+      DELETE: (req: Request) => {
+        try {
+          const taskManager = ctx.agentService.getTaskManager();
+          if (!taskManager) return error('Persistent agents are not available.', 503);
+          const id = new URL(req.url).pathname.split('/').pop() ?? '';
+          const deps = {
+            orchestrator: ctx.agentService.getOrchestrator(),
+            llmManager: ctx.agentService.getLLMManager(),
+            specialists: ctx.agentService.getSpecialists(),
+            taskManager,
+          };
+          return json(terminatePersistentAgent(deps, id));
+        } catch (err) {
+          return error(err instanceof Error ? err.message : String(err));
+        }
       },
     },
 
@@ -558,20 +652,13 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
     '/api/agents/tasks': {
       GET: () => {
         const tm = ctx.agentService.getTaskManager();
-        if (!tm) return json({ tasks: [] });
-        const tasks = tm.listTasks().map(t => ({
-          id: t.id,
-          agent_id: t.agentId,
-          agent_name: t.agentName,
-          specialist: t.specialistId,
-          task: t.task,
-          status: t.status,
-          started_at: t.startedAt,
-          completed_at: t.completedAt,
-          success: t.result?.success ?? null,
-          elapsed_ms: (t.completedAt ?? Date.now()) - t.startedAt,
+        if (!tm) return json({ tasks: [], agents: [] });
+        return json(listPersistentAgents({
+          orchestrator: ctx.agentService.getOrchestrator(),
+          llmManager: ctx.agentService.getLLMManager(),
+          specialists: ctx.agentService.getSpecialists(),
+          taskManager: tm,
         }));
-        return json({ tasks });
       },
     },
 
