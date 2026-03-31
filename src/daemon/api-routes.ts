@@ -616,7 +616,12 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
 
     '/api/system/update/dismiss': {
       POST: async (req: Request) => {
-        const body = await req.json() as { version?: string };
+        let body: { version?: string };
+        try {
+          body = await req.json() as { version?: string };
+        } catch {
+          return error('Invalid JSON in request body.', 400);
+        }
         const status = await getUpdateStatus(false);
         const version = body.version ?? status.latest_version;
         if (!version) return error('No update version is available to dismiss.');

@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { mkdirSync, openSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { getSetting, setSetting } from '../vault/settings.ts';
 import { getJarvisVersion } from '../cli/update.ts';
@@ -7,6 +8,8 @@ import { getJarvisVersion } from '../cli/update.ts';
 const PACKAGE_ROOT = join(import.meta.dir, '..', '..');
 const RELEASES_LATEST_URL = 'https://api.github.com/repos/vierisid/jarvis/releases/latest';
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+const RELEASE_CHECK_TIMEOUT_MS = 10_000;
+let updateJobStarting = false;
 
 type LatestRelease = {
   version: string;
@@ -75,46 +78,62 @@ export function compareVersions(a: string, b: string): number {
 }
 
 async function fetchLatestRelease(): Promise<LatestRelease> {
-  const res = await fetch(RELEASES_LATEST_URL, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'jarvis-update-checker',
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), RELEASE_CHECK_TIMEOUT_MS);
 
-  if (!res.ok) {
-    throw new Error(`GitHub release check failed (${res.status})`);
+  try {
+    const res = await fetch(RELEASES_LATEST_URL, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'jarvis-update-checker',
+      },
+    });
+
+    if (!res.ok) {
+      throw new Error(`GitHub release check failed (${res.status})`);
+    }
+
+    const body = await res.json() as {
+      tag_name?: string;
+      name?: string;
+      html_url?: string;
+      published_at?: string;
+      body?: string;
+    };
+
+    if (!body.tag_name) {
+      throw new Error('GitHub release payload did not include a tag name');
+    }
+
+    const version = normalizeVersion(body.tag_name);
+    const release: LatestRelease = {
+      version,
+      name: body.name?.trim() || `v${version}`,
+      url: body.html_url?.trim() || 'https://github.com/vierisid/jarvis/releases',
+      publishedAt: body.published_at ?? null,
+      notes: body.body ?? null,
+    };
+
+    setSetting('jarvis.update.latest_version', release.version);
+    setSetting('jarvis.update.latest_name', release.name);
+    setSetting('jarvis.update.latest_url', release.url);
+    setSetting('jarvis.update.latest_published_at', release.publishedAt ?? '');
+    setSetting('jarvis.update.last_checked_at', String(Date.now()));
+    setSetting('jarvis.update.check_error', '');
+
+    return release;
+  } catch (err) {
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    const message = isAbort
+      ? 'Timed out while checking for updates'
+      : (err instanceof Error ? err.message : 'Unknown error while checking for updates');
+    setSetting('jarvis.update.last_checked_at', String(Date.now()));
+    setSetting('jarvis.update.check_error', message);
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const body = await res.json() as {
-    tag_name?: string;
-    name?: string;
-    html_url?: string;
-    published_at?: string;
-    body?: string;
-  };
-
-  if (!body.tag_name) {
-    throw new Error('GitHub release payload did not include a tag name');
-  }
-
-  const version = normalizeVersion(body.tag_name);
-  const release: LatestRelease = {
-    version,
-    name: body.name?.trim() || `v${version}`,
-    url: body.html_url?.trim() || 'https://github.com/vierisid/jarvis/releases',
-    publishedAt: body.published_at ?? null,
-    notes: body.body ?? null,
-  };
-
-  setSetting('jarvis.update.latest_version', release.version);
-  setSetting('jarvis.update.latest_name', release.name);
-  setSetting('jarvis.update.latest_url', release.url);
-  setSetting('jarvis.update.latest_published_at', release.publishedAt ?? '');
-  setSetting('jarvis.update.last_checked_at', String(Date.now()));
-  setSetting('jarvis.update.check_error', '');
-
-  return release;
 }
 
 function getCachedLatestRelease(): LatestRelease | null {
@@ -179,38 +198,57 @@ export function dismissUpdate(version: string): void {
 }
 
 export async function startUpdateJob(): Promise<{ ok: boolean; message: string }> {
+  if (updateJobStarting) {
+    return { ok: false, message: 'An update is already being scheduled.' };
+  }
+
   const status = getSetting('jarvis.update.status');
   if (status === 'queued' || status === 'in_progress') {
     return { ok: false, message: 'An update is already in progress.' };
   }
 
-  const latest = await resolveLatestRelease(false);
-  setSetting('jarvis.update.status', 'queued');
-  setSetting('jarvis.update.message', latest?.version ? `Scheduling update to ${latest.version}...` : 'Scheduling update...');
-  setSetting('jarvis.update.started_at', String(Date.now()));
-  setSetting('jarvis.update.completed_at', '');
+  updateJobStarting = true;
+  try {
+    const latest = await resolveLatestRelease(false);
+    setSetting('jarvis.update.status', 'queued');
+    setSetting('jarvis.update.message', latest?.version ? `Scheduling update to ${latest.version}...` : 'Scheduling update...');
+    setSetting('jarvis.update.started_at', String(Date.now()));
+    setSetting('jarvis.update.completed_at', '');
 
-  const logsDir = join(process.env.HOME ?? join(PACKAGE_ROOT, '..'), '.jarvis', 'logs');
-  mkdirSync(logsDir, { recursive: true });
-  const logPath = join(logsDir, 'update.log');
-  const logFd = openSync(logPath, 'a');
+    const logsDir = join(homedir(), '.jarvis', 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const logPath = join(logsDir, 'update.log');
+    const logFd = openSync(logPath, 'a');
 
-  const child = spawn(
-    'bash',
-    ['-lc', 'sleep 1; bun run src/cli/update.ts'],
-    {
-      cwd: PACKAGE_ROOT,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      env: { ...process.env },
-    },
-  );
-  child.unref();
+    try {
+      const child = spawn(
+        'bash',
+        ['-lc', 'sleep 1; bun run src/cli/update.ts'],
+        {
+          cwd: PACKAGE_ROOT,
+          detached: true,
+          stdio: ['ignore', logFd, logFd],
+          env: { ...process.env },
+        },
+      );
+      child.unref();
+    } finally {
+      closeSync(logFd);
+    }
 
-  return {
-    ok: true,
-    message: latest?.version
-      ? `Starting update to ${latest.version}. The dashboard will reconnect after JARVIS restarts.`
-      : 'Starting update. The dashboard will reconnect after JARVIS restarts.',
-  };
+    return {
+      ok: true,
+      message: latest?.version
+        ? `Starting update to ${latest.version}. The dashboard will reconnect after JARVIS restarts.`
+        : 'Starting update. The dashboard will reconnect after JARVIS restarts.',
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to schedule update.';
+    setSetting('jarvis.update.status', 'error');
+    setSetting('jarvis.update.message', message);
+    setSetting('jarvis.update.completed_at', String(Date.now()));
+    return { ok: false, message };
+  } finally {
+    updateJobStarting = false;
+  }
 }

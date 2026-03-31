@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { readFileSync, existsSync, openSync } from 'node:fs';
+import { readFileSync, openSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { isLocked, releaseLock, getLogPath } from '../daemon/pid.ts';
 import { c } from './helpers.ts';
