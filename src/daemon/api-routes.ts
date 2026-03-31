@@ -537,11 +537,36 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
       GET: () => {
         const orchestrator = ctx.agentService.getOrchestrator();
         const taskManager = ctx.agentService.getTaskManager();
+        type AgentTask = {
+          id: string;
+          agentId: string;
+          status: string;
+          task: string;
+          startedAt: number;
+          completedAt?: number | null;
+        };
+        const latestTaskByAgent = new Map<string, AgentTask>();
+        const busyAgents = new Set<string>();
+
+        if (taskManager) {
+          for (const task of taskManager.listTasks()) {
+            if (!task.agentId) continue;
+            if (!task.completedAt) {
+              busyAgents.add(task.agentId);
+            }
+
+            const existing = latestTaskByAgent.get(task.agentId);
+            if (!existing || task.startedAt >= existing.startedAt) {
+              latestTaskByAgent.set(task.agentId, task);
+            }
+          }
+        }
+
         const agents = orchestrator.getAllAgents().map((a) => {
-          const latestTask = taskManager?.getAgentTask(a.id);
+          const latestTask = latestTaskByAgent.get(a.id);
           return {
             ...a.toJSON(),
-            busy: taskManager?.isAgentBusy(a.id) ?? false,
+            busy: busyAgents.has(a.id),
             latest_task: latestTask ? {
               id: latestTask.id,
               status: latestTask.status,
@@ -646,7 +671,15 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
     '/api/agents/tasks': {
       GET: () => {
         const tm = ctx.agentService.getTaskManager();
-        if (!tm) return json({ tasks: [], agents: [] });
+        if (!tm) {
+          return json({
+            active_agents: 0,
+            agents: [],
+            tasks_total: 0,
+            tasks_running: 0,
+            tasks: [],
+          });
+        }
         return json(listPersistentAgents({
           orchestrator: ctx.agentService.getOrchestrator(),
           llmManager: ctx.agentService.getLLMManager(),

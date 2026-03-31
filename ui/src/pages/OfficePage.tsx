@@ -43,7 +43,7 @@ export default function OfficePage({ agentActivity }: Props) {
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawning, setSpawning] = useState(false);
   const [spawnMessage, setSpawnMessage] = useState<{ text: string; type: "error" | "success" } | null>(null);
-  const [selectedSpecialist, setSelectedSpecialist] = useState("software-engineer");
+  const [selectedSpecialist, setSelectedSpecialist] = useState("");
   const [spawnTask, setSpawnTask] = useState("");
   const [spawnContext, setSpawnContext] = useState("");
 
@@ -66,6 +66,8 @@ export default function OfficePage({ agentActivity }: Props) {
             ? prev
             : data.specialists[0]!.id
         ));
+      } else {
+        setSelectedSpecialist("");
       }
     } catch {
       /* keep previous */
@@ -109,6 +111,7 @@ export default function OfficePage({ agentActivity }: Props) {
   const totalCount = AGENT_ROSTER.length;
 
   const selectedSpecialistMeta = specialists.find((specialist) => specialist.id === selectedSpecialist) ?? null;
+  const canSpawn = selectedSpecialist.length > 0;
 
   const handleSpawn = async () => {
     setSpawning(true);
@@ -160,7 +163,7 @@ export default function OfficePage({ agentActivity }: Props) {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <button className="ag-spawn-btn" onClick={() => setSpawnOpen(true)}>
+        <button className="ag-spawn-btn" onClick={() => setSpawnOpen(true)} disabled={!canSpawn}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
@@ -314,6 +317,11 @@ export default function OfficePage({ agentActivity }: Props) {
                   onChange={(e) => setSelectedSpecialist(e.target.value)}
                   style={fieldStyle}
                 >
+                  {specialists.length === 0 && (
+                    <option value="" disabled>
+                      No specialists available
+                    </option>
+                  )}
                   {specialists.map((specialist) => (
                     <option key={specialist.id} value={specialist.id}>
                       {specialist.name}
@@ -321,6 +329,14 @@ export default function OfficePage({ agentActivity }: Props) {
                   ))}
                 </select>
               </label>
+
+              {specialists.length === 0 && (
+                <div style={metaCardStyle}>
+                  <div style={{ color: "var(--text-2)", fontSize: "12px", lineHeight: 1.6 }}>
+                    Specialist discovery is unavailable right now. Reload the page once the daemon finishes initializing.
+                  </div>
+                </div>
+              )}
 
               {selectedSpecialistMeta && (
                 <div style={metaCardStyle}>
@@ -360,7 +376,7 @@ export default function OfficePage({ agentActivity }: Props) {
               <button onClick={() => setSpawnOpen(false)} disabled={spawning} style={modalSecondaryButtonStyle}>
                 Cancel
               </button>
-              <button onClick={handleSpawn} disabled={spawning || !selectedSpecialist} style={modalPrimaryButtonStyle}>
+              <button onClick={handleSpawn} disabled={spawning || !canSpawn} style={modalPrimaryButtonStyle}>
                 {spawning ? "Spawning..." : spawnTask.trim() ? "Spawn And Assign" : "Spawn Agent"}
               </button>
             </div>
