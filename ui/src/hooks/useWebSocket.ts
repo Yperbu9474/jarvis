@@ -397,7 +397,7 @@ export function useWebSocket() {
         setMessages((prev) => [
           ...prev,
           {
-            id: msg.id ?? crypto.randomUUID(),
+            id: crypto.randomUUID(),
             requestId: payload.requestId,
             role: "assistant",
             content: String(payload.text),
