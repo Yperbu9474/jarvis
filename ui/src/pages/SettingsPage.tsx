@@ -7,6 +7,7 @@ import { RolePanel } from "../components/settings/RolePanel";
 import { IntegrationsPanel } from "../components/settings/IntegrationsPanel";
 import { ChannelsPanel } from "../components/settings/ChannelsPanel";
 import { SidecarPanel } from "../components/settings/SidecarPanel";
+import { UpdatePanel } from "../components/settings/UpdatePanel";
 
 const SECTION_META: Record<SettingsSection, { title: string; subtitle: string }> = {
   general: { title: "General", subtitle: "Personality, role, and heartbeat configuration" },
@@ -14,6 +15,7 @@ const SECTION_META: Record<SettingsSection, { title: string; subtitle: string }>
   channels: { title: "Communication Channels", subtitle: "Telegram, Discord, voice transcription, and text-to-speech" },
   integrations: { title: "Integrations", subtitle: "Third-party service connections" },
   sidecar: { title: "Sidecar", subtitle: "Remote machine control via Go sidecar agents" },
+  update: { title: "Update", subtitle: "Check GitHub releases and install the latest JARVIS build" },
 };
 
 export default function SettingsPage({ section }: { section: SettingsSection }) {
@@ -51,6 +53,7 @@ export default function SettingsPage({ section }: { section: SettingsSection }) 
           {section === "channels" && <ChannelsPanel />}
           {section === "integrations" && <IntegrationsPanel />}
           {section === "sidecar" && <SidecarPanel />}
+          {section === "update" && <UpdatePanel />}
         </div>
       </div>
     </div>
