@@ -9,6 +9,7 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Buffer } from 'node:buffer';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { c, printOk, printErr, printWarn } from './helpers.ts';
 
@@ -122,6 +123,20 @@ async function startSystemdService(): Promise<boolean> {
     return true;
   } catch (err) {
     printErr(`Failed to start systemd service: ${err}`);
+    return false;
+  }
+}
+
+function scheduleSystemdRestart(): boolean {
+  try {
+    const child = spawn('bash', ['-lc', 'sleep 1; systemctl --user restart jarvis.service >/dev/null 2>&1'], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    child.unref();
+    return true;
+  } catch {
     return false;
   }
 }
@@ -274,6 +289,24 @@ async function startLaunchdService(): Promise<boolean> {
   }
 }
 
+function scheduleLaunchdRestart(): boolean {
+  try {
+    const uid = process.getuid?.();
+    const command = uid != null
+      ? `sleep 1; launchctl kickstart -k gui/${uid}/ai.jarvis.daemon >/dev/null 2>&1`
+      : `sleep 1; launchctl kickstart -k gui/$(id -u)/ai.jarvis.daemon >/dev/null 2>&1`;
+    const child = spawn('bash', ['-lc', command], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function uninstallLaunchd(): Promise<boolean> {
   try {
     if (existsSync(LAUNCHD_PLIST)) {
@@ -313,6 +346,20 @@ export async function startAutostartService(): Promise<boolean> {
     return startLaunchdService();
   }
   return startSystemdService();
+}
+
+/**
+ * Schedule a restart of the installed autostart service without blocking
+ * the current process. Useful when the API call is served by that service.
+ */
+export function scheduleAutostartRestart(): boolean {
+  if (process.platform === 'darwin') {
+    return scheduleLaunchdRestart();
+  }
+  if (process.platform === 'linux') {
+    return scheduleSystemdRestart();
+  }
+  return false;
 }
 
 /**
