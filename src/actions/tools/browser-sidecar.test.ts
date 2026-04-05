@@ -3,7 +3,7 @@ import { browserNavigateTool, browserScreenshotTool } from './builtin.ts';
 import { setSidecarManagerRef } from './sidecar-route.ts';
 
 describe('browser tools via sidecar', () => {
-  const dispatchRPC = mock(async () => undefined);
+  const dispatchRPC = mock(async (..._args: any[]) => undefined as any);
   const fakeManager = {
     listSidecars() {
       return [
