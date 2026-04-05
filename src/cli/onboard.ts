@@ -581,7 +581,7 @@ export async function runOnboard(): Promise<void> {
     printInfo(`Using defaults: level ${config.authority.default_level}, governed: ${config.authority.governed_categories.join(', ')}`);
   }
 
-  // ── Step 10: Autostart ────────────────────────────────────────────
+  // ── Step 10: Keepalive ────────────────────────────────────────────
 
   printStep(10, TOTAL_STEPS, 'Keepalive');
   const platform = detectPlatform();
@@ -681,6 +681,7 @@ export async function runOnboard(): Promise<void> {
   console.log('');
 
   const doSave = await askYesNo('Save this configuration?', true);
+  let keepaliveStarted = false;
   if (doSave) {
     await saveConfig(config);
     printOk(`Config saved to ${CONFIG_PATH}`);
@@ -688,7 +689,7 @@ export async function runOnboard(): Promise<void> {
     if (enableKeepalive) {
       const installed = await installAutostart();
       if (installed) {
-        await startAutostartService();
+        keepaliveStarted = await startAutostartService();
       }
     }
 
@@ -710,7 +711,7 @@ export async function runOnboard(): Promise<void> {
 
   // Offer to start daemon
   console.log('');
-  const keepaliveActive = doSave && enableKeepalive;
+  const keepaliveActive = doSave && keepaliveStarted;
   const defaultStartNow = keepaliveActive ? false : true;
   const startNowPrompt = keepaliveActive
     ? 'Start another foreground JARVIS process now?'
