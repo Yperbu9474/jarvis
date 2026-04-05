@@ -158,6 +158,59 @@ function getSearchParams(req: Request): URLSearchParams {
   return new URL(req.url).searchParams;
 }
 
+type AgentTaskSnapshot = {
+  id: string;
+  agentId: string;
+  status: string;
+  task: string;
+  startedAt: number;
+  completedAt?: number | null;
+};
+
+function buildAgentSnapshots(ctx: ApiContext) {
+  const orchestrator = ctx.agentService.getOrchestrator();
+  const taskManager = ctx.agentService.getTaskManager();
+  const latestTaskByAgent = new Map<string, AgentTaskSnapshot>();
+  const busyAgents = new Set<string>();
+
+  if (taskManager) {
+    for (const task of taskManager.listTasks()) {
+      if (!task.agentId) continue;
+      if (!task.completedAt) {
+        busyAgents.add(task.agentId);
+      }
+
+      const existing = latestTaskByAgent.get(task.agentId);
+      if (!existing || task.startedAt >= existing.startedAt) {
+        latestTaskByAgent.set(task.agentId, task);
+      }
+    }
+  }
+
+  const agents = orchestrator.getAllAgents().map((agent) => {
+    const base = agent.toJSON();
+    const latestTask = latestTaskByAgent.get(agent.id);
+    const busy = busyAgents.has(agent.id) || base.status === 'active' || Boolean(base.current_task);
+    return {
+      ...base,
+      busy,
+      latest_task: latestTask ? {
+        id: latestTask.id,
+        status: latestTask.status,
+        task: latestTask.task,
+        started_at: latestTask.startedAt,
+        completed_at: latestTask.completedAt,
+      } : null,
+    };
+  });
+
+  return {
+    agents,
+    latestTaskByAgent,
+    taskManager,
+  };
+}
+
 /**
  * Create all API route handlers.
  */
@@ -541,23 +594,7 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
     // --- Agents ---
     '/api/agents': {
       GET: () => {
-        const orchestrator = ctx.agentService.getOrchestrator();
-        const taskManager = ctx.agentService.getTaskManager();
-        const agents = orchestrator.getAllAgents().map((a) => {
-          const latestTask = taskManager?.getAgentTask(a.id);
-          return {
-            ...a.toJSON(),
-            busy: taskManager?.isAgentBusy(a.id) ?? false,
-            latest_task: latestTask ? {
-              id: latestTask.id,
-              status: latestTask.status,
-              task: latestTask.task,
-              started_at: latestTask.startedAt,
-              completed_at: latestTask.completedAt,
-            } : null,
-          };
-        });
-        return json(agents);
+        return json(buildAgentSnapshots(ctx).agents);
       },
       POST: async (req: Request) => {
         try {
@@ -584,9 +621,12 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
           }
 
           const latestTask = taskManager.getAgentTask(spawned.agent.id);
+          const busy = taskManager.isAgentBusy(spawned.agent.id)
+            || spawned.agent.status === 'active'
+            || Boolean(spawned.agent.agent.current_task);
           return json({
             ...spawned.agent.toJSON(),
-            busy: taskManager.isAgentBusy(spawned.agent.id),
+            busy,
             latest_task: latestTask ? {
               id: latestTask.id,
               status: latestTask.status,
@@ -617,18 +657,17 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
     },
 
     '/api/agents/:id': {
-      DELETE: (req: Request) => {
+      DELETE: (req: Request & { params: { id: string } }) => {
         try {
           const taskManager = ctx.agentService.getTaskManager();
           if (!taskManager) return error('Persistent agents are not available.', 503);
-          const id = new URL(req.url).pathname.split('/').pop() ?? '';
           const deps = {
             orchestrator: ctx.agentService.getOrchestrator(),
             llmManager: ctx.agentService.getLLMManager(),
             specialists: ctx.agentService.getSpecialists(),
             taskManager,
           };
-          return json(terminatePersistentAgent(deps, id));
+          return json(terminatePersistentAgent(deps, req.params.id));
         } catch (err) {
           return error(err instanceof Error ? err.message : String(err));
         }
@@ -652,7 +691,15 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
     '/api/agents/tasks': {
       GET: () => {
         const tm = ctx.agentService.getTaskManager();
-        if (!tm) return json({ tasks: [], agents: [] });
+        if (!tm) {
+          return json({
+            active_agents: 0,
+            agents: [],
+            tasks_total: 0,
+            tasks_running: 0,
+            tasks: [],
+          });
+        }
         return json(listPersistentAgents({
           orchestrator: ctx.agentService.getOrchestrator(),
           llmManager: ctx.agentService.getLLMManager(),

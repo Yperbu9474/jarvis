@@ -155,6 +155,9 @@ export function terminatePersistentAgent(deps: AgentToolDeps, agentId: string) {
 
   const agent = deps.orchestrator.getAgent(agentId);
   if (!agent) throw new Error(`Agent "${agentId}" not found`);
+  if (!agentRegistries.has(agentId)) {
+    throw new Error(`Agent "${agentId}" is not a persistent managed agent.`);
+  }
 
   const name = agent.agent.role.name;
   agentRegistries.delete(agentId);
