@@ -44,6 +44,24 @@ function findSidecar(nameOrId: string, sidecars: SidecarInfo[]): SidecarInfo | n
   return byContains ?? null;
 }
 
+function resolveSidecar(target: string): { sidecar: SidecarInfo | null; error?: string } {
+  if (!sidecarManager) {
+    return { sidecar: null, error: 'Error: Sidecar system not initialized.' };
+  }
+
+  const sidecars = sidecarManager.listSidecars();
+  const sidecar = findSidecar(target, sidecars);
+  if (!sidecar) {
+    const available = sidecars.map((s) => s.name).join(', ') || 'none';
+    return {
+      sidecar: null,
+      error: `Error: No sidecar found matching "${target}". Available: ${available}`,
+    };
+  }
+
+  return { sidecar };
+}
+
 /**
  * Route an RPC call to a sidecar. Returns the result string, or an error message.
  *
@@ -58,16 +76,9 @@ export async function routeToSidecarRaw(
   params: Record<string, unknown>,
   requiredCapability: SidecarCapability,
 ): Promise<unknown> {
-  if (!sidecarManager) {
-    return 'Error: Sidecar system not initialized.';
-  }
-
-  const sidecars = sidecarManager.listSidecars();
-  const sidecar = findSidecar(target, sidecars);
-
+  const { sidecar, error } = resolveSidecar(target);
   if (!sidecar) {
-    const available = sidecars.map((s) => s.name).join(', ') || 'none';
-    return `Error: No sidecar found matching "${target}". Available: ${available}`;
+    return error ?? `Error: No sidecar found matching "${target}".`;
   }
 
   if (!sidecar.connected) {
@@ -85,7 +96,11 @@ export async function routeToSidecarRaw(
   }
 
   try {
-    return await sidecarManager.dispatchRPC(sidecar.id, method, params);
+    const manager = sidecarManager;
+    if (!manager) {
+      return 'Error: Sidecar system not initialized.';
+    }
+    return await manager.dispatchRPC(sidecar.id, method, params);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
 
@@ -104,10 +119,11 @@ export async function routeToSidecar(
   params: Record<string, unknown>,
   requiredCapability: SidecarCapability,
 ): Promise<string> {
+  const { sidecar } = resolveSidecar(target);
   const result = await routeToSidecarRaw(target, method, params, requiredCapability);
 
   if (result === 'detached') {
-    return `Task dispatched to "${target}" and running in the background.`;
+    return `Task dispatched to "${sidecar?.name ?? target}" and running in the background.`;
   }
 
   return typeof result === 'string' ? result : JSON.stringify(result, null, 2);

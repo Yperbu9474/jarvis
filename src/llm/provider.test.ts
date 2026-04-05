@@ -445,4 +445,41 @@ describe('Groq request shaping', () => {
     expect(body.messages.at(-1).content).toBe('latest question');
     expect(body.messages.length).toBeLessThan(messages.length);
   });
+
+  test('GroqProvider keeps tool call exchanges intact when compacting history', async () => {
+    const provider = new GroqProvider('test-key') as any;
+    const long = 'x'.repeat(12_000);
+    const messages: LLMMessage[] = [
+      { role: 'system', content: 'System prompt' },
+      { role: 'user', content: long },
+      { role: 'assistant', content: long },
+      { role: 'user', content: long },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ id: 'call_1', name: 'delegate_task', arguments: { task: 'Investigate' } }],
+      },
+      { role: 'tool', content: 'done', tool_call_id: 'call_1' },
+    ];
+
+    await provider.chat(messages, {
+      tools: [
+        {
+          name: 'delegate_task',
+          description: 'Delegate focused work',
+          parameters: { type: 'object', properties: {}, required: [] },
+        },
+      ],
+    });
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof mock>;
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body));
+
+    expect(body.messages.length).toBeLessThan(messages.length);
+    expect(body.messages.at(-2).role).toBe('assistant');
+    expect(body.messages.at(-2).tool_calls[0].id).toBe('call_1');
+    expect(body.messages.at(-1).role).toBe('tool');
+    expect(body.messages.at(-1).tool_call_id).toBe('call_1');
+  });
 });

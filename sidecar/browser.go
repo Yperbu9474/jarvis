@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -240,8 +241,11 @@ func makeBrowserSnapshotHandler(cfg *SidecarConfig) RPCHandler {
 func makeBrowserClickHandler(cfg *SidecarConfig) RPCHandler {
 	return func(params map[string]any) (*RPCResult, error) {
 		elemID, ok := params["element_id"].(float64)
-		if !ok || elemID < 1 {
+		if !ok {
 			return nil, fmt.Errorf("missing required parameter: element_id")
+		}
+		if elemID < 1 || math.Trunc(elemID) != elemID {
+			return nil, fmt.Errorf("invalid element_id: must be a positive integer")
 		}
 
 		cdp, err := getCDP(cfg)
@@ -278,9 +282,13 @@ func makeBrowserTypeHandler(cfg *SidecarConfig) RPCHandler {
 		if text == "" {
 			return nil, fmt.Errorf("missing required parameter: text")
 		}
-		elemID, hasElem := params["element_id"].(float64)
-		if hasElem && elemID < 1 {
-			return nil, fmt.Errorf("missing required parameter: element_id")
+		rawElemID, elementIDProvided := params["element_id"]
+		elemID, hasElem := rawElemID.(float64)
+		if elementIDProvided && !hasElem {
+			return nil, fmt.Errorf("invalid element_id: must be a positive integer")
+		}
+		if hasElem && (elemID < 1 || math.Trunc(elemID) != elemID) {
+			return nil, fmt.Errorf("invalid element_id: must be a positive integer")
 		}
 		submit, _ := params["submit"].(bool)
 
