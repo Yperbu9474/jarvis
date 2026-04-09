@@ -656,6 +656,91 @@ function createTables(db: Database): void {
     )
   `);
 
+  // Trading runs: each strategy cycle, whether manual or scheduled
+  db.run(`
+    CREATE TABLE IF NOT EXISTS trading_runs (
+      id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL CHECK(mode IN ('paper', 'live')),
+      trigger TEXT NOT NULL CHECK(trigger IN ('manual', 'scheduler')),
+      status TEXT NOT NULL CHECK(status IN ('completed', 'blocked', 'failed')),
+      summary TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_runs_created ON trading_runs(created_at)`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS trading_signals (
+      id TEXT PRIMARY KEY,
+      run_id TEXT REFERENCES trading_runs(id) ON DELETE SET NULL,
+      symbol TEXT NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('LONG', 'SHORT', 'HOLD')),
+      confidence REAL NOT NULL,
+      price REAL NOT NULL,
+      take_profit REAL,
+      stop_loss REAL,
+      leverage INTEGER NOT NULL,
+      rationale TEXT NOT NULL,
+      indicators_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_signals_symbol ON trading_signals(symbol)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_signals_created ON trading_signals(created_at)`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS trading_positions (
+      id TEXT PRIMARY KEY,
+      symbol TEXT NOT NULL,
+      mode TEXT NOT NULL CHECK(mode IN ('paper', 'live')),
+      side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+      status TEXT NOT NULL CHECK(status IN ('open', 'closed')),
+      leverage INTEGER NOT NULL,
+      quantity REAL NOT NULL,
+      entry_price REAL NOT NULL,
+      current_price REAL NOT NULL,
+      stop_loss REAL,
+      take_profit REAL,
+      notional REAL NOT NULL,
+      unrealized_pnl REAL NOT NULL DEFAULT 0,
+      realized_pnl REAL NOT NULL DEFAULT 0,
+      opened_at INTEGER NOT NULL,
+      closed_at INTEGER,
+      close_price REAL,
+      meta TEXT
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_positions_symbol ON trading_positions(symbol)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_positions_status ON trading_positions(status)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_positions_opened ON trading_positions(opened_at)`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS trading_orders (
+      id TEXT PRIMARY KEY,
+      position_id TEXT REFERENCES trading_positions(id) ON DELETE SET NULL,
+      signal_id TEXT REFERENCES trading_signals(id) ON DELETE SET NULL,
+      provider TEXT NOT NULL CHECK(provider IN ('paper', 'bitunix')),
+      provider_order_id TEXT,
+      symbol TEXT NOT NULL,
+      mode TEXT NOT NULL CHECK(mode IN ('paper', 'live')),
+      side TEXT NOT NULL CHECK(side IN ('BUY', 'SELL')),
+      order_type TEXT NOT NULL CHECK(order_type IN ('MARKET')),
+      status TEXT NOT NULL CHECK(status IN ('simulated', 'submitted', 'rejected', 'closed')),
+      leverage INTEGER NOT NULL,
+      quantity REAL NOT NULL,
+      price REAL NOT NULL,
+      stop_loss REAL,
+      take_profit REAL,
+      pnl_snapshot REAL,
+      error_message TEXT,
+      raw_response TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_orders_symbol ON trading_orders(symbol)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trading_orders_created ON trading_orders(created_at)`);
+
   // Documents table: vault-stored documents created by JARVIS
   db.run(`
     CREATE TABLE IF NOT EXISTS documents (

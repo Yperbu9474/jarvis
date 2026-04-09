@@ -35,6 +35,7 @@ import { ApprovalDelivery } from "../authority/approval-delivery.ts";
 import { DeferredExecutor } from "../authority/deferred-executor.ts";
 import { sendDesktopNotification } from "../comms/desktop-notify.ts";
 import { SidecarManager } from "../sidecar/manager.ts";
+import { TradingService } from "../trading/service.ts";
 
 // Constants
 const DEFAULT_PORT = 3142;  // JARVIS port
@@ -56,6 +57,7 @@ let commitmentExecutor: CommitmentExecutor | null = null;
 let bgAgent: BackgroundAgentService | null = null;
 let awarenessService: import('../awareness/service.ts').AwarenessService | null = null;
 let goalService: import('../goals/service.ts').GoalService | null = null;
+let tradingService: TradingService | null = null;
 
 /**
  * Parse command line arguments
@@ -156,6 +158,11 @@ async function handleShutdown(signal: string): Promise<void> {
     if (goalService) {
       await goalService.stop();
       goalService = null;
+    }
+
+    if (tradingService) {
+      tradingService.stop();
+      tradingService = null;
     }
 
     // Stop awareness service
@@ -288,6 +295,9 @@ export async function startDaemon(userConfig?: Partial<DaemonConfig>): Promise<v
     // 4c. Create research queue
     const researchQueue = new ResearchQueue();
     setResearchQueueRef(researchQueue);
+
+    // 4d. Create trading service
+    tradingService = new TradingService();
 
     // 5. Create real services
     const agentService = new AgentService(jarvisConfig);
@@ -472,6 +482,7 @@ export async function startDaemon(userConfig?: Partial<DaemonConfig>): Promise<v
       awarenessService: null as any,
       goalService: undefined,
       sidecarManager,
+      tradingService,
     };
     setCorsOrigin(jarvisConfig.daemon.port);
     const apiRoutes = createApiRoutes(apiContext);
@@ -501,6 +512,7 @@ export async function startDaemon(userConfig?: Partial<DaemonConfig>): Promise<v
 
     // 10. Start all services
     await registry.startAll();
+    tradingService.start();
 
     // 10a-post. Wire authority components that need running services
     const toolRegistry = orchestrator.getToolRegistry();

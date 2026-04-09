@@ -93,6 +93,7 @@ import {
   getCapturesInRange,
 } from '../vault/awareness.ts';
 import type { SuggestionType } from '../awareness/types.ts';
+import type { TradingService } from '../trading/service.ts';
 
 export type ApiContext = {
   healthMonitor: HealthMonitor;
@@ -116,6 +117,7 @@ export type ApiContext = {
   goalService?: import('../goals/service.ts').GoalService;
   sidecarManager?: import('../sidecar/manager.ts').SidecarManager;
   siteBuilderService?: import('../sites/service.ts').SiteBuilderService;
+  tradingService?: TradingService;
 };
 
 // CORS headers — scoped to the dashboard origin, not wildcard
@@ -2359,6 +2361,72 @@ export function createApiRoutes(ctx: ApiContext): Record<string, unknown> {
         } catch (err) {
           return error(err instanceof Error ? err.message : String(err));
         }
+      },
+    },
+
+    // --- Trading ---
+    '/api/trading/config': {
+      GET: () => {
+        try {
+          if (!ctx.tradingService) return error('Trading service not available', 503);
+          return json(ctx.tradingService.getConfig());
+        } catch (err) { return error(`${err}`); }
+      },
+      POST: async (req: Request) => {
+        try {
+          if (!ctx.tradingService) return error('Trading service not available', 503);
+          const body = await req.json() as Record<string, unknown>;
+          const config = ctx.tradingService.saveConfig(body as any);
+          return json(config);
+        } catch (err) { return error(`${err}`); }
+      },
+    },
+
+    '/api/trading/summary': {
+      GET: async () => {
+        try {
+          if (!ctx.tradingService) return error('Trading service not available', 503);
+          return json(await ctx.tradingService.getSummary());
+        } catch (err) { return error(`${err}`); }
+      },
+    },
+
+    '/api/trading/analyze': {
+      POST: async (req: Request) => {
+        try {
+          if (!ctx.tradingService) return error('Trading service not available', 503);
+          const body = await req.json() as { symbol?: string };
+          if (!body.symbol) return error('Missing "symbol"');
+          return json(await ctx.tradingService.analyzeSymbol(body.symbol.toUpperCase()));
+        } catch (err) { return error(`${err}`); }
+      },
+    },
+
+    '/api/trading/run': {
+      POST: async (req: Request) => {
+        try {
+          if (!ctx.tradingService) return error('Trading service not available', 503);
+          const body = await req.json().catch(() => ({})) as { trigger?: 'manual' | 'scheduler' };
+          return json(await ctx.tradingService.runCycle(body.trigger ?? 'manual'));
+        } catch (err) { return error(`${err}`); }
+      },
+    },
+
+    '/api/trading/pnl/export': {
+      GET: () => {
+        try {
+          if (!ctx.tradingService) return error('Trading service not available', 503);
+          const csv = ctx.tradingService.getPnlCsv();
+          const filename = `jarvis_trading_pnl_${new Date().toISOString().slice(0, 10)}.csv`;
+          return new Response(csv, {
+            headers: {
+              ...CORS,
+              'Content-Type': 'text/csv; charset=utf-8',
+              'Content-Disposition': `attachment; filename="${sanitizeFilename(filename)}"`,
+              'X-Content-Type-Options': 'nosniff',
+            },
+          });
+        } catch (err) { return error(`${err}`); }
       },
     },
 
