@@ -343,3 +343,70 @@ describe('Tool Call Conversion', () => {
     expect(converted[0].tool_call_id).toBeUndefined();
   });
 });
+
+describe('Groq request compaction', () => {
+  test('keeps the system prompt and newest turns when history is too large', () => {
+    const provider = new GroqProvider('test-key') as any;
+    const messages: LLMMessage[] = [
+      { role: 'system', content: 'SYSTEM '.repeat(2000) },
+      ...Array.from({ length: 10 }, (_, i) => ([
+        { role: 'user' as const, content: `user-${i}-` + 'u'.repeat(2600) },
+        { role: 'assistant' as const, content: `assistant-${i}-` + 'a'.repeat(2600) },
+      ])).flat(),
+    ];
+
+    const compacted = provider.compactMessages(messages, 12000) as LLMMessage[];
+    const totalChars = compacted.reduce((sum, message) => sum + provider.estimateMessageChars(message), 0);
+
+    expect(compacted[0]!.role).toBe('system');
+    expect(String(compacted[0]!.content)).toContain('[truncated for Groq]');
+    expect(compacted.some((message) => String(message.content).includes('user-9-'))).toBe(true);
+    expect(compacted.some((message) => String(message.content).includes('assistant-9-'))).toBe(true);
+    expect(compacted.some((message) => String(message.content).includes('user-0-'))).toBe(false);
+    expect(totalChars).toBeLessThanOrEqual(12000);
+  });
+
+  test('retries chat with a smaller payload when Groq rejects an oversized request', async () => {
+    const provider = new GroqProvider('test-key', 'test-model');
+    const originalFetch = globalThis.fetch;
+    const bodies: Array<{ messages: Array<{ content: string }> }> = [];
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      if (bodies.length === 1) {
+        return new Response('message is too large', { status: 413 });
+      }
+      return new Response(JSON.stringify({
+        id: 'resp_1',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'test-model',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: 'trimmed ok' },
+          finish_reason: 'stop',
+        }],
+        usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    try {
+      const response = await provider.chat([
+        { role: 'system', content: 'S'.repeat(12000) },
+        { role: 'user', content: 'U'.repeat(9000) },
+        { role: 'assistant', content: 'A'.repeat(9000) },
+        { role: 'user', content: 'Final question?' },
+      ]);
+
+      expect(response.content).toBe('trimmed ok');
+      expect(bodies).toHaveLength(2);
+      expect(JSON.stringify(bodies[1]).length).toBeLessThan(JSON.stringify(bodies[0]).length);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
