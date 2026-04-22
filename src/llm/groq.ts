@@ -86,6 +86,7 @@ export class GroqProvider implements LLMProvider {
   private apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
   private static readonly SAFE_PROMPT_CHAR_BUDGET = 24_000;
   private static readonly SAFE_TOOL_OVERHEAD_CHARS = 8_000;
+  private static readonly DEFAULT_MAX_TOKENS = 2048;
 
   constructor(apiKey: string, defaultModel = 'llama-3.3-70b-versatile') {
     this.apiKey = apiKey;
@@ -262,7 +263,7 @@ export class GroqProvider implements LLMProvider {
   }
 
   private buildRequestBody(messages: LLMMessage[], options: LLMOptions, stream: boolean): Record<string, unknown> {
-    const { model = this.defaultModel, temperature, max_tokens, tools } = options;
+    const { model = this.defaultModel, temperature, max_tokens = GroqProvider.DEFAULT_MAX_TOKENS, tools } = options;
     const body: Record<string, unknown> = {
       model,
       messages: this.convertMessages(this.compactMessages(messages, tools)),
@@ -270,7 +271,7 @@ export class GroqProvider implements LLMProvider {
 
     if (stream) body.stream = true;
     if (temperature !== undefined) body.temperature = temperature;
-    if (max_tokens !== undefined) body.max_completion_tokens = max_tokens;
+    body.max_completion_tokens = max_tokens;
     if (tools && tools.length > 0) {
       body.tools = this.convertTools(tools);
       body.tool_choice = 'auto';
