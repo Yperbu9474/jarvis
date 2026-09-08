@@ -66,4 +66,15 @@ interface SpeechRecognitionConstructor {
 interface Window {
   SpeechRecognition?: SpeechRecognitionConstructor;
   webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  /**
+   * Injected by the sidecar's panel runtime (sidecar/panels_runtime.go) when
+   * installPanelExternalNav reports that new-window routing to the system
+   * browser is genuinely installed, deferred opens included. Absent in an
+   * ordinary browser, and absent in a panel where any part of that failed.
+   *
+   * Read it before treating a null from `window.open` as a failure: the host's
+   * handler opens the URL externally and returns no view, which is
+   * indistinguishable from a blocked popup.
+   */
+  __jarvisOpensExternally?: boolean;
 }

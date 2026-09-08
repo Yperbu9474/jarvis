@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { openExternal, openedOrHandedOff } from "./external-open";
 import { useInterviewSession } from "./useInterviewSession";
 import type { OnboardingStatus } from "./useOnboardingStatus";
 import "./OnboardingWizard.css";
@@ -623,11 +624,15 @@ export function OnboardingWizard({
         // starting the poll. A user who opened the link by hand and connected
         // successfully watched this step sit unfinished forever. (The hosted
         // account panel hit the identical bug and fixed it the same way.)
-        const acct = window.open(managed.connect_url, "_blank");
-        if (!acct) {
+        const acct = openExternal(managed.connect_url);
+        if (!openedOrHandedOff(acct)) {
           // Genuinely blocked, or a webview that refuses window.open. Tell the
           // user where to go, but KEEP POLLING: completing it over there is what
           // finishes this step, and that works whether or not we opened the tab.
+          //
+          // Suppressed when the host routes new windows itself: there a null is
+          // the hand-off succeeding, and this message would be printed over a
+          // browser window opening in front of the user.
           setConnectErr(`Open ${managed.connect_url} to connect Google, then come back here.`);
         }
         stopGooglePoll();
@@ -656,8 +661,13 @@ export function OnboardingWizard({
         );
         return;
       }
-      const win = window.open(d.auth_url, "_blank", "noopener,noreferrer");
-      if (!win) {
+      // Via openExternal for the reason spelled out in the managed branch
+      // above: `window.open` with `noopener` returns null BY SPECIFICATION, so
+      // the check below fired on every single click and told the user their
+      // popup was blocked while the consent screen opened perfectly well behind
+      // the message. Same bug, same fix, one branch later.
+      const win = openExternal(d.auth_url);
+      if (!openedOrHandedOff(win)) {
         // No popup → no sign-in in flight; don't sit in "Connecting…" polling.
         setGoogleState("idle");
         setConnectErr("Your browser blocked the sign-in window. Allow pop-ups, or open Settings → Integrations to connect.");
