@@ -187,8 +187,14 @@ type FilesystemConfig struct {
 
 type BrowserConfig struct {
 	// ExecutablePath optionally pins the Chromium-based browser to drive. When
-	// empty the sidecar auto-detects one (the OS default browser if it is
-	// Chromium-based, otherwise a known install: Chrome, Edge, Brave, ...).
+	// empty the sidecar auto-detects one: on Linux and Windows the OS default
+	// browser if it is Chromium-based, then a known install on every platform
+	// (Chrome, Chromium, Edge, Brave, Vivaldi, plus Opera on Linux/Windows and
+	// Arc as a last resort on macOS). macOS has no default-browser stage.
+	//
+	// Set this for anything not on that list, or to override the pick: it is
+	// tried first and accepts any Chromium build that speaks
+	// --remote-debugging-pipe.
 	ExecutablePath string `yaml:"executable_path"`
 	// ProfileDir is the dedicated user-data dir for Jarvis's automation browser
 	// (kept separate from the user's own profile). Defaults to a temp dir.
