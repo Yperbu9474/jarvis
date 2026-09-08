@@ -308,6 +308,53 @@ morning/evening routines fire at your wall-clock time:
 timezone: "Europe/Rome"
 ```
 
+### Logs
+
+`jarvis start -d` redirects the detached daemon's output into
+`~/.jarvis/logs/jarvis.log`, and `jarvis logs [-f]` tails it. Under **systemd**
+or **Docker** that redirection does not happen: output goes to journald
+(`journalctl -u jarvis`) or `docker logs`, and there is no file. To get the same
+file in every launch mode, point the daemon at one:
+
+```yaml
+daemon:
+  log_file_path: "~/.jarvis/logs/jarvis.log"
+  log_file_max_bytes: 1048576   # optional, defaults to 1 MiB
+```
+
+The daemon then mirrors its own stdout and stderr into that file, on top of
+whatever the terminal or the service manager already receives. Lines are
+stripped of ANSI escapes, run through the credential redactor, and stamped with
+an ISO-8601 timestamp. The file is a ring: past `log_file_max_bytes` the oldest
+lines are dropped from the top, so it settles at roughly that size and never
+fills the disk. Leave `log_file_path` unset and no file is written.
+
+`log_file_max_bytes` is a MEMORY budget too, not only a disk one: the window is
+kept in the daemon's heap so the file can be rewritten from it, so a 64 MiB cap
+costs ~64 MiB of RSS. Values below 4 KiB are raised and values above 64 MiB (or
+a non-finite one, which is what `log_file_max_bytes: .inf` gives you) are
+lowered, with a warning on stderr.
+
+Three caveats.
+
+- If something else already writes the daemon's stdout/stderr into that same
+  file - `jarvis start -d`, the launchd plist's `StandardOutPath`, a
+  `StandardOutput=append:` in your own unit - the daemon detects it (it compares
+  the inode behind fds 1 and 2 with the configured path) and does NOT install
+  the in-process sink. You get the launcher's file, uncapped and unredacted, and
+  the log says so at startup. That check exists because the two together are
+  actively harmful: the sink caps by renaming a fresh file over the path, which
+  would leave the launcher's descriptors appending to a deleted inode that grows
+  forever and that `ls` cannot show.
+- `jarvis logs -f` uses `tail -F`, and every compaction replaces the file, so
+  `tail` reopens it and re-prints the whole window. With the defaults that is
+  ~1 MiB of already-seen lines roughly every 256 KiB of new output. It is
+  inherent to capping a single file in place (rotation and truncate-in-place
+  make a tailer restart too). Raise `log_file_max_bytes` if it bothers you, or
+  follow journald instead.
+- Output from subprocesses that inherit the daemon's file descriptors reaches
+  the terminal and journald but not this file.
+
 ## Quick reference
 
 | | Single machine | LAN via IP | VPS + domain |

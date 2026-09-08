@@ -217,6 +217,36 @@ jarvis logs -f          # Follow live logs
 
 The dashboard is available at `http://localhost:3142` once the daemon is running.
 
+### Logs
+
+`jarvis start -d` writes the daemon's output to `~/.jarvis/logs/jarvis.log`, and
+`jarvis logs -f` follows it. Started any other way - in the foreground, under
+systemd, in Docker - there is no file: output goes to the terminal, `journalctl`
+or `docker logs`. To get the same file in every launch mode, add to
+`~/.jarvis/config.yaml`:
+
+```yaml
+daemon:
+  log_file_path: "~/.jarvis/logs/jarvis.log"
+  log_file_max_bytes: 1048576   # optional, defaults to 1 MiB
+```
+
+The daemon mirrors its output there in addition to wherever it already goes.
+Lines are timestamped, stripped of terminal colour codes, and run through the
+credential redactor, so the file is safe to hand to someone debugging. It is
+capped: past `log_file_max_bytes` the oldest lines are dropped, so it settles at
+roughly that size instead of filling the disk. Unset means no file.
+
+The cap is an in-memory ring as well as a file size, so `log_file_max_bytes` is
+an RSS budget too - 1 MiB of log is 1 MiB of daemon memory. It is clamped to
+4 KiB..64 MiB.
+
+One thing to expect from `jarvis logs -f`: it runs `tail -F`, and every time the
+cap is enforced the file is replaced, so `tail` reopens it and reprints the
+whole window. At the default size that is ~1 MiB of already-seen lines about
+every 256 KiB of new output. That is inherent to capping one file in place, not
+a bug.
+
 ### Updating
 
 `jarvis update` detects how you installed JARVIS and runs the right update command. Equivalent manual commands per install method:

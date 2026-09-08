@@ -116,8 +116,54 @@ daemon: {
   data_dir: string;      // Data directory path (default: ~/.jarvis)
   db_path: string;       // SQLite database path (default: ~/.jarvis/jarvis.db)
   public_url?: string;   // Public HTTPS origin behind a reverse proxy
+  log_file_path?: string;      // Mirror stdout/stderr to this file (unset = none)
+  log_file_max_bytes?: number; // Ring size for that file (default: 1 MiB)
 }
 ```
+
+#### `log_file_path`
+
+Jarvis only ever wrote a log file under `jarvis start -d` (the CLI redirects the
+detached child's file descriptors) and under launchd. Under systemd - how hosted
+instances run - and under Docker there is no file at all, so the only record is
+journald or the container runtime. Setting `log_file_path` installs an
+in-process sink (`src/util/log-file.ts`) that gives every launch mode the same
+file:
+
+- `~` is expanded on load; the parent directory is created if missing.
+- Every line is stripped of ANSI escapes, passed through `src/util/redact.ts`,
+  and prefixed with an ISO-8601 timestamp, so the file carries no credentials
+  and is safe for an operator to read.
+- The file is a ring capped at `log_file_max_bytes` (default 1 MiB, clamped to
+  4 KiB..64 MiB - `.inf` and other non-finite values fall back to the default).
+  Past the cap the oldest lines are dropped from the top on line boundaries; the
+  rewrite is atomic (temp file + `rename`), which is why `jarvis logs -f` uses
+  `tail -F` - and why a follower sees the whole window reprinted on every
+  compaction.
+- The ring lives in the daemon's heap, so the cap is an RSS budget as much as a
+  disk budget. The window is seeded from the tail of the existing file at
+  startup, so a restart (or a crash loop) does not throw away the previous run.
+- A single line is truncated to a quarter of the cap before it enters the ring,
+  so one huge payload cannot evict the whole window.
+- A path that cannot be opened or written degrades to "no file sink" with one
+  warning, and a file lost at runtime is retried and rebuilt from the ring. The
+  daemon never dies over its log file.
+- A FIFO or a symlink at the path is refused: `open(2)` on a FIFO with no reader
+  blocks forever, and the sink runs before anything else boots.
+- If the launcher already has the daemon's stdout/stderr open on that same file
+  (`jarvis start -d`, launchd's `StandardOutPath`, a `StandardOutput=append:`),
+  the daemon fstats fds 1/2 against the path and skips the sink entirely - the
+  two together would leave those descriptors writing to an unlinked inode.
+- Subprocesses spawned with `stdio: 'inherit'` write to the inherited
+  descriptors from another process, so their output reaches the terminal and
+  journald but not this file.
+
+Both keys live under `daemon:` rather than in a section of their own because
+`loadConfig` discards everything outside the system-owned sections - a
+top-level `logging:` block would be dropped on every load. Neither has an entry
+in `DEFAULT_CONFIG` (same as `drain_deadline_ms`): absent has to stay
+distinguishable from "set to the default", and the fallback is applied where
+the value is consumed.
 
 ### `llm`
 

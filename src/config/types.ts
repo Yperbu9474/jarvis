@@ -550,6 +550,44 @@ export type JarvisConfig = {
      * drain finishes before SIGKILL. Default 75s.
      */
     drain_deadline_ms?: number;
+    /**
+     * Where to mirror this daemon's stdout/stderr as a size-capped, redacted
+     * file. Unset (the default) means no file is written.
+     *
+     * Under systemd - how the hosted fleet runs it, and `jarvis@.service`
+     * carries no `StandardOutput=` - and under Docker there is no log file at
+     * all, so the only record is journald or the container runtime and the
+     * hosting control plane has nothing per instance to read (docs/LOGS.md,
+     * "The brain's side"). Hosted instances get
+     * `/home/u_<id>/.jarvis/logs/jarvis.log` rendered by the control plane; it
+     * has to sit under the instance's home because the unit is
+     * `ProtectSystem=strict` with `ReadWritePaths=/home/%i /run/jarvis`.
+     *
+     * Lives under `daemon:` (rather than a `logging:` section of its own)
+     * because loadConfig DISCARDS every section outside the system-owned set -
+     * see USER_OWNED_SECTIONS below. A new top-level key would be silently
+     * dropped on every load. `~/` is expanded by loadConfig.
+     *
+     * No DEFAULT_CONFIG entry, on the drain_deadline_ms precedent: absent must
+     * stay distinguishable from "set to the default", and the fallback is
+     * applied where the value is consumed (src/util/log-file.ts).
+     */
+    log_file_path?: string;
+    /**
+     * Ring size for `log_file_path`, in bytes. Default 1 MiB, which is also
+     * the control plane's per-read cap. Once the file passes the cap the
+     * oldest lines are dropped from the top, so it settles at roughly this
+     * size and never grows without bound.
+     *
+     * The ring is held IN MEMORY - that is what the file is rewritten from -
+     * so this is an RSS budget as much as a disk budget. Clamped to
+     * 4 KiB..64 MiB at the point of use: below the floor a rewrite costs more
+     * than it saves, and above the ceiling the daemon pays for a window nobody
+     * reads. Non-finite values fall back to the default, because
+     * `log_file_max_bytes: .inf` is legal YAML and used to mean "never
+     * compact, grow until the OOM killer arrives".
+     */
+    log_file_max_bytes?: number;
   };
   auth?: AuthConfig;
   /**

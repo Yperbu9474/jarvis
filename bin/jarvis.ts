@@ -163,11 +163,17 @@ async function cmdStart(args: string[]): Promise<void> {
     console.log(c.cyan('Starting J.A.R.V.I.S. daemon...'));
 
     const logPath = getLogPath();
-    const logFile = Bun.file(logPath);
 
     const daemonArgs = [join(PACKAGE_ROOT, 'bin/jarvis.ts'), 'start', '--no-open'];
     if (port) daemonArgs.push('--port', String(port));
 
+    // We redirect the child's stdout AND stderr into logPath. If
+    // daemon.log_file_path names this same file the child does NOT install its
+    // in-process sink on top: it fstats fds 1/2 against the configured path and
+    // skips (src/daemon/index.ts). That check lives in the daemon rather than
+    // here because it is the only place that covers every launcher - this one,
+    // `jarvis update`'s restart, and the launchd plist - and because comparing
+    // inodes catches spellings a string compare cannot.
     const logFd = openSync(logPath, 'a');
     const child = spawn('bun', daemonArgs, {
       detached: true,
@@ -402,7 +408,18 @@ function cmdLogs(args: string[]): void {
 
   if (follow) {
     // tail -f equivalent
-    const tailProc = Bun.spawn(['tail', '-f', '-n', String(lines), logPath], {
+    // -F, not -f: the daemon's file sink caps the log by rewriting it through
+    // a temp file + rename, so the inode changes and a plain `tail -f` would
+    // keep following a deleted inode and go silent. -F follows by NAME.
+    //
+    // The cost of that, and it is visible: on every compaction GNU tail says
+    // "has been replaced; following new file" and reprints the ENTIRE new
+    // file, so a follower sees ~1 MiB of already-seen lines about every
+    // 256 KiB of new output at the default cap. Inherent to capping one file
+    // in place - rotation and truncate-in-place restart a tailer too - and
+    // documented in README.md / docs/SELF_HOSTING.md rather than worked
+    // around, because every workaround costs more than the noise does.
+    const tailProc = Bun.spawn(['tail', '-F', '-n', String(lines), logPath], {
       stdio: ['ignore', 'inherit', 'inherit'],
     });
 
