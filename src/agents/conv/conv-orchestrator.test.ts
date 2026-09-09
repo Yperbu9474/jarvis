@@ -351,6 +351,13 @@ describe('ConvOrchestrator', () => {
       expect(messages[0]!.cache).toBe(true);
       const staticText = String(messages[0]!.content);
       expect(staticText).toContain('TestBot persona.');
+      // Workflow authoring routes to high. This row is the surface a small
+      // conv model pattern-matches on, so it outranks the `delegate` tool
+      // description; the two must not disagree. It lives in the static half,
+      // so it costs nothing per turn.
+      // The decision, not the phrasing: a workflow-authoring row that routes
+      // to high with the general template.
+      expect(staticText).toMatch(/BUILD a workflow.*tier=high, template=general/);
       expect(staticText).not.toContain('Alice');
       expect(staticText).not.toContain('Weather');
       // message[1]: dynamic system prompt, NOT cache-marked
