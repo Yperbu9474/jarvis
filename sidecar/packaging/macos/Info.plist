@@ -25,6 +25,16 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- Self-hosted brains commonly use plain HTTP on a LAN or private overlay
+	     address. ATS applies to WKWebView independently of reachability, so an
+	     installed app otherwise renders those dashboards as a blank page even
+	     though Safari can open the same URL. Panel navigation is still restricted
+	     in code to the configured brain origin. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 	<!-- TCC usage strings a bundled app needs (a bare binary borrowed its parent's).
 	     Screen Recording + Accessibility (global hotkeys) are prompted at runtime and
 	     need no Info.plist key, but are documented in README.md. -->

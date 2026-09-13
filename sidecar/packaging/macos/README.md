@@ -9,7 +9,7 @@ needs once it's no longer borrowing its parent process's permissions.
 
 | File | Purpose |
 |---|---|
-| `Info.plist` | Bundle manifest — `com.jarvis.sidecar`, `LSUIElement` (menu-bar agent, no Dock icon), mic + AppleEvents usage strings. `__VERSION__` is filled in by the Makefile. |
+| `Info.plist` | Bundle manifest — `com.jarvis.sidecar`, `LSUIElement` (menu-bar agent, no Dock icon), WebView access to self-hosted HTTP brains, and mic + AppleEvents usage strings. `__VERSION__` is filled in by the Makefile. |
 | `entitlements.plist` | Hardened-runtime entitlements (mic, AppleEvents) applied when the bundle is Developer ID-signed for notarization. |
 | `AppIcon.svg` | Vector source for the app icon (Monochrome Lab: ink tile, paper drop). |
 | `AppIcon.png` | 1024×1024 raster of the SVG (committed so the icon step needs only Mac built-ins). |
