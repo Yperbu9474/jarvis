@@ -254,6 +254,81 @@ func TestPanelSpawnHandler_InjectsTokenAndKeepsFragment(t *testing.T) {
 	}
 }
 
+func TestPanelSpawnHandler_RejectsSchemeDowngrade(t *testing.T) {
+	svc := newFakePanelService()
+	h := makePanelSpawnHandler(svc, "wss://brain.example.com/sidecar/connect", stubPanelToken("tok-123"))
+
+	_, err := h(map[string]any{"id": "x", "url": "http://brain.example.com/#/"})
+	if err == nil {
+		t.Fatal("expected rejection of an http panel for a wss brain, got nil")
+	}
+	if len(svc.spawned) != 0 {
+		t.Errorf("downgraded panel must not spawn, got %v", svc.spawned)
+	}
+}
+
+func TestSanitizePanelURL_Scheme(t *testing.T) {
+	const (
+		wsBrain  = "ws://localhost:3142/sidecar/connect"
+		wssBrain = "wss://brain.example.com/sidecar/connect"
+	)
+	cases := []struct {
+		name  string
+		panel string
+		brain string
+		ok    bool
+	}{
+		{"http panel, ws brain", "http://localhost:3142/#/", wsBrain, true},
+		{"https panel, ws brain", "https://localhost:3142/#/", wsBrain, true},
+		{"https panel, wss brain", "https://brain.example.com/#/", wssBrain, true},
+		{"http panel, wss brain", "http://brain.example.com/#/", wssBrain, false},
+		{"uppercase http panel, wss brain", "HTTP://brain.example.com/#/", wssBrain, false},
+		{"http panel, https brain", "http://brain.example.com/#/", "https://brain.example.com", false},
+		{"file panel on the brain host", "file://brain.example.com/etc/passwd", wssBrain, false},
+		{"ftp panel on an http brain", "ftp://localhost:3142/", wsBrain, false},
+		{"ws panel on the brain host", "ws://localhost:3142/", wsBrain, false},
+		{"wss panel on the brain host", "wss://brain.example.com/", wssBrain, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := sanitizePanelURL(tc.panel, tc.brain, "tok-123")
+			if tc.ok && err != nil {
+				t.Fatalf("expected %q to be accepted, got %v", tc.panel, err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("expected %q to be rejected, got %q", tc.panel, got)
+			}
+		})
+	}
+}
+
+// The tray builds its panel URL from panelOrigin and sanitizePanelURL then pins
+// the scheme. The two ws->http / wss->https mappings are separate code, so keep
+// them agreeing or tray-opened rooms stop rendering.
+func TestPanelOrigin_PassesSanitizePanelURL(t *testing.T) {
+	for _, brain := range []string{
+		"ws://localhost:3142/sidecar/connect",
+		"ws://10.0.0.25:3142/sidecar/connect",
+		"wss://brain.example.com/sidecar/connect",
+	} {
+		c := &SidecarClient{claims: &SidecarTokenClaims{Brain: brain}}
+		origin, err := c.panelOrigin()
+		if err != nil {
+			t.Fatalf("panelOrigin for %q: %v", brain, err)
+		}
+		if _, err := sanitizePanelURL(origin+"/#/", brain, "tok-123"); err != nil {
+			t.Errorf("tray panel url for brain %q rejected: %v", brain, err)
+		}
+	}
+}
+
+func TestRedactPanelURL_RepeatedToken(t *testing.T) {
+	got := redactPanelURL("http://localhost:3142/?token=&token=secret-tok#/")
+	if strings.Contains(got, "secret-tok") {
+		t.Fatalf("access token leaked: %q", got)
+	}
+}
+
 // ---------- panel.close ----------
 
 func TestPanelCloseHandler_HappyPath(t *testing.T) {

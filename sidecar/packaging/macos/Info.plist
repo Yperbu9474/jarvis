@@ -25,11 +25,18 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<!-- Self-hosted brains commonly use plain HTTP on a LAN or private overlay
-	     address. ATS applies to WKWebView independently of reachability, so an
-	     installed app otherwise renders those dashboards as a blank page even
-	     though Safari can open the same URL. Panel navigation is still restricted
-	     in code to the configured brain origin. -->
+	<!-- ATS exception for web content only. Self-hosted brains are commonly
+	     reached over plain HTTP on a LAN or an overlay network like Tailscale
+	     (docs/SELF_HOSTING.md). ATS has always refused cleartext loads to fully
+	     qualified host names, and per Apple's NSAllowsLocalNetworking docs
+	     macOS 14 refuses them to raw IP addresses too, so without this key the
+	     panel webview shows such a dashboard as a blank window while a browser
+	     opens the same URL. The Go client's ws:// connection is not subject to
+	     ATS, which is why the sidecar still connects.
+	     The exemption covers every WKWebView in the process. Code pins only a
+	     panel's first URL (sanitizePanelURL: the brain host, http or https
+	     only, never http for a wss brain); later in-page navigations are not
+	     restricted. A refused panel load is logged by panels_loadfail_darwin.go. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoadsInWebContent</key>

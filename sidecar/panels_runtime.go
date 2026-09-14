@@ -323,6 +323,11 @@ func (s *panelService) Spawn(spec PanelSpec) (PanelID, error) {
 				}
 			}
 
+			// Log why a page failed to load, so a refused or unreachable load
+			// leaves a reason in sidecar.log instead of only a blank window.
+			// macOS only (panels_loadfail_darwin.go); a no-op elsewhere.
+			installPanelLoadFailureLog(wv, spec.ID)
+
 			// Send the dashboard's window.open / target=_blank OAuth "connect"
 			// flows to the system browser instead of a nested embedded window
 			// (Google/Clerk refuse OAuth inside an embedded webview). Installed

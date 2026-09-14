@@ -50,10 +50,16 @@ func makePanelSpawnHandler(svc PanelService, brainURL string, panelToken func(co
 // token so the brain can authenticate the webview's same-origin content fetches
 // (and set its session cookie). The enrollment JWT itself is never placed here.
 //
-// The JWT `brain` claim is a WebSocket URL (ws(s)://host/sidecar/connect); only
-// its host is compared, so http(s) panel URLs on the same host are accepted
+// The JWT `brain` claim is a WebSocket URL (ws(s)://host/sidecar/connect); its
+// host is compared, so http(s) panel URLs on the same host are accepted
 // whether the brain is local (localhost) or remote. A mismatch is rejected
 // rather than silently rendered.
+//
+// The scheme is pinned too: only http(s) renders, and a TLS brain (wss/https)
+// only ever gets an https panel. The URL carries the access token, and the
+// macOS app exempts web content from ATS so self-hosted http brains can render
+// (packaging/macos/Info.plist), so nothing below this check would refuse a
+// cleartext load. An http brain may still be shown over https.
 func sanitizePanelURL(rawURL, brainURL, accessToken string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -68,6 +74,13 @@ func sanitizePanelURL(rawURL, brainURL, accessToken string) (string, error) {
 	}
 	if !strings.EqualFold(u.Host, allowed.Host) {
 		return "", fmt.Errorf("panel url host %q is not the brain origin %q", u.Host, allowed.Host)
+	}
+	// url.Parse lowercases the scheme, so these compare case-insensitively.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("panel url scheme %q is not http or https", u.Scheme)
+	}
+	if (allowed.Scheme == "wss" || allowed.Scheme == "https") && u.Scheme != "https" {
+		return "", fmt.Errorf("panel url for TLS brain origin %q must use https, not %s (a brain override with a different scheme than the brain's public URL causes this)", allowed.Host, u.Scheme)
 	}
 	if accessToken != "" {
 		q := u.Query()
@@ -85,7 +98,7 @@ func redactPanelURL(raw string) string {
 	if err != nil {
 		return "[unparseable url]"
 	}
-	if u.Query().Get("token") != "" {
+	if u.Query().Has("token") {
 		q := u.Query()
 		q.Set("token", "REDACTED")
 		u.RawQuery = q.Encode()
