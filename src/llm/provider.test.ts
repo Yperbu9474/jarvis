@@ -787,7 +787,7 @@ describe('Default Models', () => {
 
   test('NVIDIAProvider has correct default model', () => {
     const provider = new NVIDIAProvider('test-key') as any;
-    expect(provider.defaultModel).toBe('meta/llama-3.3-70b-instruct');
+    expect(provider.defaultModel).toBe('nvidia/nemotron-3-super-120b-a12b');
   });
 
   test('can override default models', () => {
@@ -1218,6 +1218,20 @@ describe('Groq request shaping', () => {
       expect((error as LLMProviderError).code).toBe('rate_limit');
       expect((error as LLMProviderError).retryAfterMs).toBe(2500);
     }
+  });
+
+  test('NVIDIAProvider.listModels de-dupes the catalog and bounds the request with a timeout', async () => {
+    let signal: AbortSignal | null | undefined;
+    globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
+      signal = init?.signal;
+      return new Response(
+        JSON.stringify({ data: [{ id: 'b/chat' }, { id: 'a/chat' }, { id: 'a/chat' }] }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+
+    expect(await new NVIDIAProvider('').listModels()).toEqual(['a/chat', 'b/chat']);
+    expect(signal).toBeInstanceOf(AbortSignal);
   });
 
   test('GroqProvider compaction never orphans a tool message from its assistant tool_call', async () => {

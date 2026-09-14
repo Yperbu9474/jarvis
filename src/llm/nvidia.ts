@@ -9,6 +9,7 @@ import type {
 } from './provider.ts';
 import { classifyHttpStatus } from './provider.ts';
 import { compactHistory, calculateHistoryBudget } from './history.ts';
+import { NVIDIA_DEFAULT_MODEL } from './nvidia-models.ts';
 
 type OpenAIContentPart =
   | { type: 'text'; text: string }
@@ -93,7 +94,7 @@ export class NVIDIAProvider implements LLMProvider {
   private defaultModel: string;
   private apiUrl = 'https://integrate.api.nvidia.com/v1/chat/completions';
 
-  constructor(apiKey: string, defaultModel = 'meta/llama-3.3-70b-instruct') {
+  constructor(apiKey: string, defaultModel = NVIDIA_DEFAULT_MODEL) {
     this.apiKey = apiKey;
     this.defaultModel = defaultModel;
   }
@@ -286,6 +287,9 @@ export class NVIDIAProvider implements LLMProvider {
     const url = 'https://integrate.api.nvidia.com/v1/models';
     const resp = await fetch(url, {
       headers: this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {},
+      // Settings and onboarding wait on this call; a hung upstream must fail
+      // into the offline fallback list instead of loading forever.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!resp.ok) {
       throw new Error(`NVIDIA models API error (${resp.status})`);

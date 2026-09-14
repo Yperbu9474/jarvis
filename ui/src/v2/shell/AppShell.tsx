@@ -18,7 +18,7 @@ import { SystemTakeover, SystemBanners, useSystemStateOverride, type TakeoverKin
 import { BillingBanner } from "../billing/BillingBanner";
 import { closeRoom, openRoom, useV2Route, ROOM_KEYS, type RoomKey } from "../router";
 import { getRoomBody } from "../rooms/RoomBodyRegistry";
-import { setRoomEntry } from "../rooms/roomEntryStore";
+import { setRoomEntry, type RoomEntrySource } from "../rooms/roomEntryStore";
 import { FloatingWindowsLayer } from "../rooms/FloatingWindowsLayer";
 import type { LayoutRect } from "../rooms/useRoomLayout";
 import { useSpacebarPTT } from "../voice/useSpacebarPTT";
@@ -224,6 +224,19 @@ function AppShellLive() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navKey, navTs]);
 
+  // Expanding a room window routes that room into the main surface. Close the
+  // source window first: the floating layer draws over the surface and the Talk
+  // thread keeps inline windows mounted, so leaving it open shows a second copy
+  // of the room with its own local state. Click, keyboard and voice expand all
+  // go through here so they can't drift apart.
+  const expandRoomWindow = useCallback((id: string, source: RoomEntrySource) => {
+    const win = live.roomWindows.find((w) => w.id === id);
+    if (!win) return;
+    setRoomEntry(win.roomKey as RoomKey, source);
+    live.closeRoomWindow(id);
+    openRoom(win.roomKey as RoomKey);
+  }, [live.roomWindows, live.closeRoomWindow]);
+
   // Daemon-driven RoomWindow chrome control (voice "close" / "minimize"
   // / "expand" / "restore"). Resolves "most_recent" to the most-recently-
   // added window in the items list; named targets to the matching window.
@@ -274,8 +287,7 @@ function AppShellLive() {
         live.setRoomWindowStateById(target.id, "inline");
         break;
       case "expand":
-        setRoomEntry(target.roomKey as RoomKey, "voice");
-        openRoom(target.roomKey as RoomKey);
+        expandRoomWindow(target.id, "voice");
         break;
       case "reorder":
         // handled below via the global path; shouldn't reach here with target
@@ -519,6 +531,15 @@ function AppShellLive() {
     return null;
   }, [live.items]);
 
+  // Inline windows in the thread were spawned by some prior action (palette
+  // pick, voice "open X", or InlineCard Focus). We don't track that origin
+  // per-window, so mark the expand as "thread": the user is escalating an
+  // existing thread element.
+  const handleRoomExpand = useCallback(
+    (id: string) => expandRoomWindow(id, "thread"),
+    [expandRoomWindow],
+  );
+
   return (
     <LiveDataProvider
       value={{
@@ -560,18 +581,7 @@ function AppShellLive() {
         onRoomClose={(id) => live.closeRoomWindow(id)}
         onRoomMinimize={(id) => live.setRoomWindowStateById(id, "minimized")}
         onRoomRestore={(id) => live.setRoomWindowStateById(id, "inline")}
-        onRoomExpand={(id) => {
-          const item = live.items.find((i) => i.id === id);
-          if (item && item.kind === "room-window") {
-            // Inline windows in the thread were spawned by some prior
-            // action (palette pick, voice "open X", or InlineCard
-            // Focus). We don't track that origin per-window today, so
-            // mark the expand as "thread" — the user is escalating an
-            // existing thread element to fullscreen.
-            setRoomEntry(item.roomKey as RoomKey, "thread");
-            openRoom(item.roomKey as RoomKey);
-          }
-        }}
+        onRoomExpand={handleRoomExpand}
         onRoomLayoutChange={(id, next) => live.setRoomWindowLayout(id, next)}
         onClarifier={handleClarifier}
         onRepeatBack={handleRepeatBack}
@@ -601,15 +611,7 @@ function AppShellLive() {
         onClose={(id) => live.closeRoomWindow(id)}
         onMinimize={(id) => live.setRoomWindowStateById(id, "minimized")}
         onRestore={(id) => live.setRoomWindowStateById(id, "inline")}
-        onExpand={(id) => {
-          const item = live.items.find((i) => i.id === id);
-          if (item && item.kind === "room-window") {
-            // Floating-window expand → fullscreen room. Same source
-            // attribution as the inline expand above.
-            setRoomEntry(item.roomKey as RoomKey, "thread");
-            openRoom(item.roomKey as RoomKey);
-          }
-        }}
+        onExpand={handleRoomExpand}
         onLayoutChange={(id, next) => live.setRoomWindowLayout(id, next)}
       />
       <CommandPalette

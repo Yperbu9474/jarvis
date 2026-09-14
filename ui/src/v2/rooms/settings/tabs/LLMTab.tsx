@@ -17,6 +17,7 @@ import {
   type SettingsHook,
   parseModelRef,
 } from "../useSettingsData";
+import { NVIDIA_FALLBACK_MODELS, preferredNvidiaModel } from "../../../onboarding/llm-setup";
 
 /** Reserved hosted provider name (mirrors the daemon's usejarvis_ai carve-out). */
 const USEJARVIS_NAME = "usejarvis_ai";
@@ -134,11 +135,7 @@ const MODELS_BY_KIND: Record<LLMProviderKind, string[]> = {
     "meta-llama/llama-4-maverick",
     "mistralai/mistral-large",
   ],
-  nvidia: [
-    "meta/llama-3.3-70b-instruct",
-    "meta/llama-3.1-8b-instruct",
-    "google/gemma-2-2b-it",
-  ],
+  nvidia: [...NVIDIA_FALLBACK_MODELS],
   openai_compatible: [],
   litellm: [],
   omniroute: [],
@@ -1065,10 +1062,17 @@ function ModelSelector({
   // escape hatch or a fallback text box while the catalog loads would offer a
   // control whose every input the server rejects (review pr3#1/#2).
   const isHosted = providers[selectedProvider]?.kind === USEJARVIS_KIND;
+  const isNvidia = providers[selectedProvider]?.kind === "nvidia";
   const usesCustomOnly = models.length === 0 && !isHosted;
   const catalogStatus: CatalogStatus | undefined = catalogState?.status[selectedProvider];
   const hostedCatalogPending = isHosted && models.length === 0 && catalogStatus !== "failed";
-  const hostedCatalogFailed = isHosted && (catalogStatus === "failed" || catalogStatus === "degraded");
+  const liveCatalogFailed = (isHosted || isNvidia) && (catalogStatus === "failed" || catalogStatus === "degraded");
+  const savedModelRetired = nvidiaSavedModelRetired(
+    providers[selectedProvider]?.kind,
+    catalogStatus,
+    parsed?.provider === selectedProvider ? parsed.model : undefined,
+    catalogState?.catalogs[selectedProvider] ?? [],
+  );
   const effectiveModel = selectedModel === "__custom__" ? customModel.trim() : selectedModel;
   // Routing truth for an unset slot: what the daemon binds (plan alias or the
   // default), shown as a placeholder — never presented as a saved choice.
@@ -1104,7 +1108,10 @@ function ModelSelector({
             setSelectedProvider(next);
             // Reset model when provider changes - the model list is now different.
             const nextModels = providerModels(providers, next, ollamaModels, providerCatalogs);
-            const defaultModel = seedModelForProvider(nextModels, preferredModel);
+            // NVIDIA's catalog is alphabetical and mixes embedding and vision
+            // models, so seed a known chat model rather than whatever sorts first.
+            const nextPreferred = providers[next]?.kind === "nvidia" ? preferredNvidiaModel(nextModels) : preferredModel;
+            const defaultModel = seedModelForProvider(nextModels, nextPreferred);
             setSelectedModel(defaultModel);
             setCustomModel("");
             if (defaultModel !== "__custom__") {
@@ -1176,7 +1183,7 @@ function ModelSelector({
           />
         )}
 
-        {hostedCatalogFailed && catalogState && (
+        {liveCatalogFailed && catalogState && (
           <button
             type="button"
             className="v2-set__btn"
@@ -1202,11 +1209,18 @@ function ModelSelector({
           </button>
         )}
       </div>
-      {hostedCatalogFailed && (
+      {liveCatalogFailed && (
         <div className="v2-set__hint v2-set__hint--warn" style={{ marginTop: "var(--s-2)" }}>
-          {catalogStatus === "degraded"
+          {isNvidia
+            ? "NVIDIA’s model catalog could not be loaded — showing current fallback models."
+            : catalogStatus === "degraded"
             ? "Showing the standard aliases — your plan’s model catalog is unreachable."
             : "Your plan’s model catalog could not be loaded."}
+        </div>
+      )}
+      {savedModelRetired && (
+        <div className="v2-set__hint v2-set__hint--warn" style={{ marginTop: "var(--s-2)" }}>
+          NVIDIA no longer lists <code>{parsed?.model}</code>, so requests to it will fail. Pick a current model.
         </div>
       )}
       {effectiveModel && effectiveModel !== "__custom__" && (
@@ -1239,6 +1253,22 @@ export function unsetSlotPlaceholder(
   return `${effectiveHint.source === "plan" ? "Plan default" : "Default"}: ${model}`;
 }
 
+/**
+ * True when the saved NVIDIA model is missing from the catalog NVIDIA just
+ * served. A retired hosted ID answers HTTP 410, so the picker says so instead
+ * of showing it as an ordinary custom choice. Only a successful, non-empty
+ * live read counts: the offline fallback list is not authoritative.
+ */
+export function nvidiaSavedModelRetired(
+  kind: LLMProviderKind | undefined,
+  status: CatalogStatus | undefined,
+  savedModel: string | undefined,
+  liveCatalog: readonly string[],
+): boolean {
+  return kind === "nvidia" && status === "ok" && !!savedModel
+    && liveCatalog.length > 0 && !liveCatalog.includes(savedModel);
+}
+
 export function providerModels(
   providers: Record<string, LLMConfigProviderView>,
   name: string,
@@ -1251,11 +1281,11 @@ export function providerModels(
   // The curated list is untagged guesswork, so prefer the real catalog when
   // the daemon could read it; fall back to the guesses when it could not.
   if (entry.kind === "ollama" && live && live.length > 0) return live;
-  // Live-only catalogs: OmniRoute routes include user-defined combos, Groq's
-  // list is account-scoped, and the hosted uj-* aliases are key-scoped — a
-  // curated list cannot know any of them.
+  // Live catalogs: NVIDIA rotates hosted IDs, OmniRoute routes include
+  // user-defined combos, Groq's list is account-scoped, and hosted uj-*
+  // aliases are key-scoped — a curated list cannot stay authoritative.
   if (
-    (entry.kind === "omniroute" || entry.kind === "groq" || entry.kind === "usejarvis_ai")
+    (entry.kind === "nvidia" || entry.kind === "omniroute" || entry.kind === "groq" || entry.kind === "usejarvis_ai")
     && providerCatalogs[name]?.length
   ) {
     const catalog = providerCatalogs[name]!;
@@ -1296,9 +1326,7 @@ function useOllamaModels(enabled: boolean): string[] | null {
   return models;
 }
 
-/** Load volatile catalogs for gateways/providers whose IDs change frequently:
- * OmniRoute (user-defined routes/combos) and the hosted Usejarvis AI proxy
- * (key-scoped uj-* aliases). */
+/** Load volatile catalogs for gateways/providers whose IDs change frequently. */
 export type CatalogStatus = "loading" | "ok" | "degraded" | "failed";
 
 export interface LiveCatalogState {
@@ -1315,6 +1343,7 @@ function useLiveProviderCatalogs(
   const targets = Object.entries(providers)
     .filter(([, entry]) =>
       entry.kind === "omniroute"
+      || entry.kind === "nvidia"
       || entry.kind === USEJARVIS_KIND
       || (entry.kind === "groq" && entry.has_api_key))
     .map(([name, entry]) => ({
@@ -1339,13 +1368,19 @@ function useLiveProviderCatalogs(
       return;
     }
     let cancelled = false;
+    const current = new Set(targets.map(({ name }) => name));
+    // Drop catalogs of removed providers; the rest stay on screen while they
+    // reload. Same object when nothing is dropped, so pickers do not re-sync.
+    setCatalogs((prev) => Object.keys(prev).every((name) => current.has(name))
+      ? prev
+      : Object.fromEntries(Object.entries(prev).filter(([name]) => current.has(name))));
     setStatus(Object.fromEntries(targets.map(({ name }) => [name, "loading" as const])));
-    Promise.all(targets.map(async ({ name, kind }) => {
+    const load = async ({ name, kind }: (typeof targets)[number]) => {
       try {
-        // The hosted catalog needs no inputs (the daemon holds the system
-        // credentials); Groq and OmniRoute are looked up by saved provider name.
-        const response = kind === USEJARVIS_KIND
-          ? await fetch("/api/config/llm/usejarvis/models")
+        // Hosted and NVIDIA catalogs need no inputs; Groq and OmniRoute are
+        // looked up by saved provider name.
+        const response = kind === USEJARVIS_KIND || kind === "nvidia"
+          ? await fetch(kind === "nvidia" ? "/api/config/llm/nvidia/models" : "/api/config/llm/usejarvis/models")
           : await fetch(
               kind === "groq"
                 ? "/api/config/llm/groq/models"
@@ -1365,11 +1400,17 @@ function useLiveProviderCatalogs(
       } catch {
         return [name, [] as string[], "failed"] as const;
       }
-    })).then((entries) => {
-      if (cancelled) return;
-      setCatalogs(Object.fromEntries(entries.map(([name, models]) => [name, models])));
-      setStatus(Object.fromEntries(entries.map(([name, , state]) => [name, state])));
-    });
+    };
+    // Each catalog lands as soon as its own provider answers, so one slow
+    // upstream (NVIDIA's public API, an unreachable OmniRoute) cannot hold
+    // every picker on "Loading".
+    for (const target of targets) {
+      load(target).then(([name, models, state]) => {
+        if (cancelled) return;
+        setCatalogs((prev) => ({ ...prev, [name]: models }));
+        setStatus((prev) => ({ ...prev, [name]: state }));
+      });
+    }
     return () => { cancelled = true; };
   }, [signature, attempt]); // targets are represented by the stable signature
 
