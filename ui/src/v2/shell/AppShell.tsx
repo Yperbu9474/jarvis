@@ -18,7 +18,7 @@ import { SystemTakeover, SystemBanners, useSystemStateOverride, type TakeoverKin
 import { BillingBanner } from "../billing/BillingBanner";
 import { closeRoom, openRoom, useV2Route, ROOM_KEYS, type RoomKey } from "../router";
 import { getRoomBody } from "../rooms/RoomBodyRegistry";
-import { setRoomEntry } from "../rooms/roomEntryStore";
+import { setRoomEntry, type RoomEntrySource } from "../rooms/roomEntryStore";
 import { FloatingWindowsLayer } from "../rooms/FloatingWindowsLayer";
 import type { LayoutRect } from "../rooms/useRoomLayout";
 import { useSpacebarPTT } from "../voice/useSpacebarPTT";
@@ -224,6 +224,19 @@ function AppShellLive() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navKey, navTs]);
 
+  // Expanding a room window routes that room into the main surface. Close the
+  // source window first: the floating layer draws over the surface and the Talk
+  // thread keeps inline windows mounted, so leaving it open shows a second copy
+  // of the room with its own local state. Click, keyboard and voice expand all
+  // go through here so they can't drift apart.
+  const expandRoomWindow = useCallback((id: string, source: RoomEntrySource) => {
+    const win = live.roomWindows.find((w) => w.id === id);
+    if (!win) return;
+    setRoomEntry(win.roomKey as RoomKey, source);
+    live.closeRoomWindow(id);
+    openRoom(win.roomKey as RoomKey);
+  }, [live.roomWindows, live.closeRoomWindow]);
+
   // Daemon-driven RoomWindow chrome control (voice "close" / "minimize"
   // / "expand" / "restore"). Resolves "most_recent" to the most-recently-
   // added window in the items list; named targets to the matching window.
@@ -274,8 +287,7 @@ function AppShellLive() {
         live.setRoomWindowStateById(target.id, "inline");
         break;
       case "expand":
-        setRoomEntry(target.roomKey as RoomKey, "voice");
-        openRoom(target.roomKey as RoomKey);
+        expandRoomWindow(target.id, "voice");
         break;
       case "reorder":
         // handled below via the global path; shouldn't reach here with target
@@ -519,16 +531,14 @@ function AppShellLive() {
     return null;
   }, [live.items]);
 
-  // Expanding is a presentation transition, not another copy of the room.
-  // Remove the source window before mounting the fullscreen RoomShell so the
-  // inline/floating body cannot remain visible and keep duplicate local state.
-  const handleRoomExpand = useCallback((id: string) => {
-    const item = live.items.find((candidate) => candidate.id === id);
-    if (!item || item.kind !== "room-window") return;
-    setRoomEntry(item.roomKey as RoomKey, "thread");
-    live.closeRoomWindow(id);
-    openRoom(item.roomKey as RoomKey);
-  }, [live.items, live.closeRoomWindow]);
+  // Inline windows in the thread were spawned by some prior action (palette
+  // pick, voice "open X", or InlineCard Focus). We don't track that origin
+  // per-window, so mark the expand as "thread": the user is escalating an
+  // existing thread element.
+  const handleRoomExpand = useCallback(
+    (id: string) => expandRoomWindow(id, "thread"),
+    [expandRoomWindow],
+  );
 
   return (
     <LiveDataProvider
