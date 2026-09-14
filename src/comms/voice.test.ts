@@ -379,6 +379,27 @@ describe('LocalWhisperSTT.transcribe', () => {
     expect(calledUrl).toBe('http://localhost:8080/v1/audio/transcriptions');
   });
 
+  test('openai_compatible: completes a bare origin or /v1 base, keeps other paths', async () => {
+    const cases: Array<[string, string]> = [
+      ['http://localhost:8000', 'http://localhost:8000/v1/audio/transcriptions'],
+      ['http://localhost:8000/v1/', 'http://localhost:8000/v1/audio/transcriptions'],
+      ['http://gateway.local/stt/transcribe', 'http://gateway.local/stt/transcribe'],
+    ];
+    let calledUrl = '';
+
+    globalThis.fetch = mock(async (url: string) => {
+      calledUrl = url;
+      return new Response(JSON.stringify({ text: 'ok' }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as any;
+
+    for (const [endpoint, expected] of cases) {
+      await new LocalWhisperSTT(endpoint, undefined, 'openai_compatible').transcribe(makeWavBuffer());
+      expect(calledUrl).toBe(expected);
+    }
+  });
+
   test('openai_compatible: sends model, omits language unless configured', async () => {
     const stt = new LocalWhisperSTT('http://localhost:8080/v1/audio/transcriptions', 'whisper-1', 'openai_compatible');
     const wav = makeWavBuffer();

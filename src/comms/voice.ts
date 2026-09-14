@@ -263,6 +263,12 @@ export class LocalWhisperSTT implements STTProvider {
       const hasPath = /\/(inference|asr|transcribe)$/.test(normalized);
       return hasPath ? normalized : `${normalized}/inference`;
     }
+    // OpenAI-compatible servers (Speaches, faster-whisper-server, LM Studio) are
+    // usually known by their base URL, the same one an LLM provider takes. Finish
+    // a bare origin or a /v1 base with the transcriptions route; any other path
+    // is already the full URL (or a custom proxy route) and is used as-is.
+    if (/\/v1$/.test(normalized)) return `${normalized}/audio/transcriptions`;
+    if (/^[a-z][a-z\d+.-]*:\/\/[^/]+$/i.test(normalized)) return `${normalized}/v1/audio/transcriptions`;
     return normalized;
   }
 

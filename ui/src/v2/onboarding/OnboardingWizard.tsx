@@ -284,7 +284,7 @@ export function OnboardingWizard({
   const [sttEndpoint, setSttEndpoint] = useState("http://localhost:8080");
   const [sttServerType, setSttServerType] = useState<LocalSTTServerType>("whisper_cpp");
   const [localSTTLoaded, setLocalSTTLoaded] = useState(false);
-  const localSTTTouched = useRef(false);
+  const localSTTTouched = useRef({ endpoint: false, serverType: false });
   // speaking
   const [tts, setTts] = useState<"off" | "edge" | "elevenlabs">("edge");
   const [edgeVoice, setEdgeVoice] = useState(EDGE_VOICES[0]!.id);
@@ -305,18 +305,20 @@ export function OnboardingWizard({
 
   // A rerun must show and preserve the local server's existing dialect. The
   // endpoint alone cannot distinguish whisper.cpp's /inference API from an
-  // OpenAI-compatible /v1/audio/transcriptions server.
+  // OpenAI-compatible /v1/audio/transcriptions server. A field the user already
+  // edited while this read was in flight keeps their value.
   useEffect(() => {
     if (hosted) return;
     let cancelled = false;
     fetch("/api/config/stt")
       .then((response) => response.ok ? response.json() : null)
       .then((current: { local_endpoint?: unknown; local_server_type?: unknown } | null) => {
-        if (cancelled || localSTTTouched.current || !current) return;
-        if (typeof current.local_endpoint === "string" && current.local_endpoint) {
+        if (cancelled || !current) return;
+        const touched = localSTTTouched.current;
+        if (!touched.endpoint && typeof current.local_endpoint === "string" && current.local_endpoint) {
           setSttEndpoint(current.local_endpoint);
         }
-        if (current.local_server_type === "whisper_cpp" || current.local_server_type === "openai_compatible") {
+        if (!touched.serverType && (current.local_server_type === "whisper_cpp" || current.local_server_type === "openai_compatible")) {
           setSttServerType(current.local_server_type);
         }
         setLocalSTTLoaded(true);
@@ -627,11 +629,14 @@ export function OnboardingWizard({
       if (!hosted && stt !== "skip") {
         const sttBlock: Record<string, unknown> = { provider: stt };
         if ((stt === "openai" || stt === "groq") && sttKey) sttBlock[stt] = { api_key: sttKey };
-        else if (stt === "local" && (localSTTLoaded || localSTTTouched.current)) {
-          // If the initial config read failed and the user did not edit these
-          // fields, omit the nested block. mergeSTTConfig will retain any
-          // existing endpoint/dialect instead of replacing it with defaults.
-          sttBlock.local = localSTTSetup(sttEndpoint, sttServerType);
+        else if (stt === "local") {
+          const local = localSTTSetup({
+            endpoint: sttEndpoint,
+            serverType: sttServerType,
+            loaded: localSTTLoaded,
+            touched: localSTTTouched.current,
+          });
+          if (local) sttBlock.local = local;
         }
         payload.stt = sttBlock;
       }
@@ -1179,7 +1184,7 @@ export function OnboardingWizard({
                   aria-label="Local speech server API"
                   value={sttServerType}
                   onChange={(e) => {
-                    localSTTTouched.current = true;
+                    localSTTTouched.current.serverType = true;
                     setSttServerType(e.target.value as LocalSTTServerType);
                   }}
                 >
@@ -1189,13 +1194,19 @@ export function OnboardingWizard({
                 <input
                   className="obw-inp"
                   aria-label="Local speech server endpoint"
-                  placeholder="http://localhost:8080"
+                  aria-describedby="obw-stt-endpoint-hint"
+                  placeholder={sttServerType === "openai_compatible" ? "http://localhost:8000/v1" : "http://localhost:8080"}
                   value={sttEndpoint}
                   onChange={(e) => {
-                    localSTTTouched.current = true;
+                    localSTTTouched.current.endpoint = true;
                     setSttEndpoint(e.target.value);
                   }}
                 />
+                <div id="obw-stt-endpoint-hint" className="obw-hint">
+                  {sttServerType === "openai_compatible"
+                    ? "The server's base URL. Jarvis sends audio to /v1/audio/transcriptions."
+                    : "The whisper.cpp server's URL. Jarvis sends audio to /inference."}
+                </div>
               </div>
             )}
             {stt !== "skip" && <MicLevelCheck />}
