@@ -4,7 +4,9 @@ import { useInterviewSession } from "./useInterviewSession";
 import { WorkflowActivation } from "./WorkflowActivation";
 import type { OnboardingStatus } from "./useOnboardingStatus";
 import "./OnboardingWizard.css";
-import { modelForOnboardingTest, onboardingDefaultModelRef } from "./llm-setup";
+import {
+  NVIDIA_FALLBACK_MODELS, modelForOnboardingTest, onboardingDefaultModelRef, selectLiveNvidiaModel,
+} from "./llm-setup";
 import { modKey } from "../ui/platform";
 import { useSystemPermissions } from "./useSystemPermissions";
 import {
@@ -89,14 +91,6 @@ type Provider = {
   noConfig?: boolean; needsKey?: boolean; keyOptional?: boolean; needsBaseUrl?: boolean; optionalBaseUrl?: boolean; freeModel?: boolean;
   keyLabel?: string; urlLabel?: string; urlPh?: string; models?: string[]; hint?: string;
 };
-export const NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
-
-/** Keep a valid selection when NVIDIA refreshes its rotating catalog. */
-export function selectLiveNvidiaModel(current: string, models: string[]): string {
-  if (models.includes(current)) return current;
-  return models.includes(NVIDIA_DEFAULT_MODEL) ? NVIDIA_DEFAULT_MODEL : (models[0] ?? current);
-}
-
 const PROVIDERS: Provider[] = [
   // Hosted brain. `soon: true` is the self-hosted default; the wizard flips
   // it off when GET /api/config/llm reports hosted_llm (see provList below).
@@ -107,7 +101,7 @@ const PROVIDERS: Provider[] = [
   { id: "gemini", name: "Gemini", abbr: "Ge", kind: "API key", needsKey: true, models: ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro"] },
   { id: "ollama", name: "Ollama", abbr: "Ol", kind: "local", needsBaseUrl: true, urlLabel: "Ollama base URL", urlPh: "http://localhost:11434", models: ["llama3.1", "llama3.2", "mistral", "qwen2.5"] },
   { id: "openrouter", name: "OpenRouter", abbr: "OR", kind: "API key", needsKey: true, models: ["anthropic/claude-opus-4", "openai/gpt-5.4", "google/gemini-2.5-pro"] },
-  { id: "nvidia", name: "NVIDIA NIM", abbr: "N", kind: "API key", needsKey: true, models: [NVIDIA_DEFAULT_MODEL, "openai/gpt-oss-20b"], hint: "The catalog includes chat, embedding and vision models. Test connection confirms the selected model supports chat." },
+  { id: "nvidia", name: "NVIDIA NIM", abbr: "N", kind: "API key", needsKey: true, models: [...NVIDIA_FALLBACK_MODELS], hint: "The catalog includes chat, embedding and vision models. Test connection confirms the selected model supports chat." },
   { id: "openai_compatible", name: "OpenAI-compatible", abbr: "C", kind: "self-hosted", needsBaseUrl: true, freeModel: true, urlLabel: "Base URL", urlPh: "http://localhost:8080/v1", hint: "Any server that speaks /v1/chat/completions: llama.cpp, vLLM, LM Studio, TGI. Include the /v1 suffix." },
   { id: "litellm", name: "LiteLLM", abbr: "L", kind: "proxy", needsBaseUrl: true, freeModel: true, urlLabel: "LiteLLM proxy URL", urlPh: "http://localhost:4000/v1", hint: "The model below must match an alias defined on your proxy." },
   { id: "omniroute", name: "OmniRoute", abbr: "Om", kind: "gateway", needsKey: true, keyOptional: true, needsBaseUrl: true, urlLabel: "OmniRoute API URL", urlPh: "http://localhost:20128/v1", models: ["auto"], hint: "Loads every route and combo from your OmniRoute instance. Tool calls and streaming are supported through its OpenAI-compatible API." },
@@ -1375,7 +1369,7 @@ export function OnboardingWizard({
                   onChange={(e) => { if (e.target.value !== "__hidden_by_filter") setModel(e.target.value); }}
                 >
                   {modelHiddenByFilter && <option value="__hidden_by_filter" disabled>{model} (hidden by filter)</option>}
-                  {model && !pickerModels.includes(model) && <option value={model} disabled>{model} (unavailable)</option>}
+                  {provId === "nvidia" && model && !pickerModels.includes(model) && <option value={model} disabled>{model} (unavailable)</option>}
                   {visibleModels.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>}
@@ -1386,7 +1380,7 @@ export function OnboardingWizard({
         {provId === "groq" && groqLoading && <div className="obw-hint">Loading currently supported Groq models…</div>}
         {provId === "groq" && !groqLoading && groqModels?.length === 0 && <div className="obw-hint">Could not read Groq’s live catalog — showing current fallback models.</div>}
         {provId === "nvidia" && nvidiaLoading && <div className="obw-hint">Loading NVIDIA’s current model catalog…</div>}
-        {provId === "nvidia" && !nvidiaLoading && nvidiaModels?.length === 0 && <div className="obw-hint">Could not read NVIDIA’s live catalog — showing current fallback models.</div>}
+        {provId === "nvidia" && !nvidiaLoading && nvidiaModels?.length === 0 && <div className="obw-hint">Could not read NVIDIA’s live catalog — showing current fallback models. <button type="button" className="obw-advlink" style={{ marginTop: 0 }} onClick={() => setNvidiaModels(null)}>Retry</button></div>}
         <div className="obw-testrow">
           <button className="obw-btn obw-btn-ghost sm" disabled={test.status === "testing"} onClick={runTest}>{test.status === "testing" ? "Testing…" : "Test connection"}</button>
           {test.status === "ok" && <span className="obw-testres ok"><span className="dot" />Connected · {test.msg}</span>}

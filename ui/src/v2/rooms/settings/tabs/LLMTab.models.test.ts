@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { providerModels, seedModelForProvider, unsetSlotPlaceholder, USEJARVIS_TIER_ALIASES } from "./LLMTab";
+import {
+  nvidiaSavedModelRetired, providerModels, seedModelForProvider, unsetSlotPlaceholder, USEJARVIS_TIER_ALIASES,
+} from "./LLMTab";
+import { preferredNvidiaModel } from "../../../onboarding/llm-setup";
 
 /** The hosted catalog is key-scoped across EVERY modality, so these pickers —
  * which choose chat tiers and the single-model default — must never offer a
@@ -48,6 +51,26 @@ describe("providerModels: hosted catalog filtering", () => {
       "nvidia/nemotron-3-super-120b-a12b",
       "openai/gpt-oss-20b",
     ]);
+  });
+});
+
+describe("NVIDIA seeding and retired saved models", () => {
+  test("a provider switch seeds a known chat model, not the alphabetical first", () => {
+    const catalog = ["01-ai/yi-large", "adept/fuyu-8b", "openai/gpt-oss-20b"];
+    expect(seedModelForProvider(catalog, preferredNvidiaModel(catalog))).toBe("openai/gpt-oss-20b");
+  });
+
+  test("flags a saved model the live catalog no longer lists", () => {
+    const live = ["nvidia/nemotron-3-super-120b-a12b", "openai/gpt-oss-20b"];
+    expect(nvidiaSavedModelRetired("nvidia", "ok", "meta/llama-3.3-70b-instruct", live)).toBe(true);
+    expect(nvidiaSavedModelRetired("nvidia", "ok", "openai/gpt-oss-20b", live)).toBe(false);
+  });
+
+  test("never flags against a failed or empty read, or another provider kind", () => {
+    expect(nvidiaSavedModelRetired("nvidia", "failed", "retired/model", [])).toBe(false);
+    expect(nvidiaSavedModelRetired("nvidia", "loading", "retired/model", ["current/model"])).toBe(false);
+    expect(nvidiaSavedModelRetired("nvidia", "ok", "retired/model", [])).toBe(false);
+    expect(nvidiaSavedModelRetired("groq", "ok", "retired/model", ["current/model"])).toBe(false);
   });
 });
 

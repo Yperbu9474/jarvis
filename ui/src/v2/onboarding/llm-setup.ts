@@ -20,3 +20,24 @@ export function onboardingDefaultModelRef(
 ): string {
   return `${provider}:${validatedModel || selectedModel || 'default'}`;
 }
+
+/** NVIDIA's hosted chat default. Mirrors src/llm/nvidia-models.ts. */
+export const NVIDIA_DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
+
+/**
+ * Offline fallback list and seed preference, best first. NVIDIA's live
+ * catalog mixes chat, embedding and vision models in alphabetical order, so
+ * its first entry is not a safe model to seed.
+ */
+export const NVIDIA_FALLBACK_MODELS: readonly string[] = [NVIDIA_DEFAULT_MODEL, 'openai/gpt-oss-20b'];
+
+/** The best preferred NVIDIA chat model the catalog still serves, if any. */
+export function preferredNvidiaModel(models: readonly string[]): string | undefined {
+  return NVIDIA_FALLBACK_MODELS.find((model) => models.includes(model));
+}
+
+/** Keep a valid selection when NVIDIA refreshes its rotating catalog. */
+export function selectLiveNvidiaModel(current: string, models: readonly string[]): string {
+  if (models.includes(current)) return current;
+  return preferredNvidiaModel(models) ?? models[0] ?? current;
+}

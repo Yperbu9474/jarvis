@@ -162,6 +162,27 @@ describe('LLM settings model migrations', () => {
     expect(config.llm.default).toBe('groq:openai/gpt-oss-120b');
     expect(getSetting('llm.default')).toBe('groq:deepseek-r1-distill-llama-70b');
   });
+
+  it('replaces saved retired NVIDIA IDs by provider kind, not name', () => {
+    initDatabase(':memory:');
+    setSetting('llm.providers', JSON.stringify({
+      nim: { kind: 'nvidia' },
+      local: { kind: 'openai_compatible', base_url: 'http://localhost:8000/v1' },
+    }));
+    setSetting('llm.default', 'nim:meta/llama-3.3-70b-instruct');
+    setSetting('llm.tiers.low', 'nim:google/gemma-2-2b-it');
+    // A self-hosted NIM can keep serving an ID NVIDIA retired from its cloud.
+    setSetting('llm.tiers.medium', 'local:meta/llama-3.3-70b-instruct');
+    const config = structuredClone(DEFAULT_CONFIG);
+
+    mergeLLMSettingsIntoConfig(config);
+
+    expect(config.llm.default).toBe('nim:nvidia/nemotron-3-super-120b-a12b');
+    expect(config.llm.tiers?.low).toBe('nim:openai/gpt-oss-20b');
+    expect(config.llm.tiers?.medium).toBe('local:meta/llama-3.3-70b-instruct');
+    expect(getSetting('llm.default')).toBe('nim:nvidia/nemotron-3-super-120b-a12b');
+    expect(getSetting('llm.tiers.low')).toBe('nim:openai/gpt-oss-20b');
+  });
 });
 
 function hostedConfig(): JarvisConfig {

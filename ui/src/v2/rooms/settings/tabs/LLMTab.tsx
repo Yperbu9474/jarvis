@@ -17,6 +17,7 @@ import {
   type SettingsHook,
   parseModelRef,
 } from "../useSettingsData";
+import { NVIDIA_FALLBACK_MODELS, preferredNvidiaModel } from "../../../onboarding/llm-setup";
 
 /** Reserved hosted provider name (mirrors the daemon's usejarvis_ai carve-out). */
 const USEJARVIS_NAME = "usejarvis_ai";
@@ -41,7 +42,6 @@ export const USEJARVIS_TIER_ALIASES: Record<LLMTier, string> = {
 /** Derived from the tier map so the two cannot drift: every alias a tier can
  * be seeded with is, by construction, an alias the picker offers. */
 const CHAT_USEJARVIS_ALIASES = new Set(Object.values(USEJARVIS_TIER_ALIASES));
-const NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 
 /**
  * Which model to auto-commit when the provider dropdown changes.
@@ -135,10 +135,7 @@ const MODELS_BY_KIND: Record<LLMProviderKind, string[]> = {
     "meta-llama/llama-4-maverick",
     "mistralai/mistral-large",
   ],
-  nvidia: [
-    NVIDIA_DEFAULT_MODEL,
-    "openai/gpt-oss-20b",
-  ],
+  nvidia: [...NVIDIA_FALLBACK_MODELS],
   openai_compatible: [],
   litellm: [],
   omniroute: [],
@@ -1070,6 +1067,12 @@ function ModelSelector({
   const catalogStatus: CatalogStatus | undefined = catalogState?.status[selectedProvider];
   const hostedCatalogPending = isHosted && models.length === 0 && catalogStatus !== "failed";
   const liveCatalogFailed = (isHosted || isNvidia) && (catalogStatus === "failed" || catalogStatus === "degraded");
+  const savedModelRetired = nvidiaSavedModelRetired(
+    providers[selectedProvider]?.kind,
+    catalogStatus,
+    parsed?.provider === selectedProvider ? parsed.model : undefined,
+    catalogState?.catalogs[selectedProvider] ?? [],
+  );
   const effectiveModel = selectedModel === "__custom__" ? customModel.trim() : selectedModel;
   // Routing truth for an unset slot: what the daemon binds (plan alias or the
   // default), shown as a placeholder — never presented as a saved choice.
@@ -1105,7 +1108,9 @@ function ModelSelector({
             setSelectedProvider(next);
             // Reset model when provider changes - the model list is now different.
             const nextModels = providerModels(providers, next, ollamaModels, providerCatalogs);
-            const nextPreferred = providers[next]?.kind === "nvidia" ? NVIDIA_DEFAULT_MODEL : preferredModel;
+            // NVIDIA's catalog is alphabetical and mixes embedding and vision
+            // models, so seed a known chat model rather than whatever sorts first.
+            const nextPreferred = providers[next]?.kind === "nvidia" ? preferredNvidiaModel(nextModels) : preferredModel;
             const defaultModel = seedModelForProvider(nextModels, nextPreferred);
             setSelectedModel(defaultModel);
             setCustomModel("");
@@ -1213,6 +1218,11 @@ function ModelSelector({
             : "Your plan’s model catalog could not be loaded."}
         </div>
       )}
+      {savedModelRetired && (
+        <div className="v2-set__hint v2-set__hint--warn" style={{ marginTop: "var(--s-2)" }}>
+          NVIDIA no longer lists <code>{parsed?.model}</code>, so requests to it will fail. Pick a current model.
+        </div>
+      )}
       {effectiveModel && effectiveModel !== "__custom__" && (
         <div className="v2-set__hint" style={{ marginTop: "var(--s-2)" }}>
           Saved as <code>{selectedProvider}:{effectiveModel}</code>
@@ -1241,6 +1251,22 @@ export function unsetSlotPlaceholder(
   if (!effectiveHint?.ref || effectiveHint.source === "choice") return "Select a model…";
   const model = parseModelRef(effectiveHint.ref)?.model ?? effectiveHint.ref;
   return `${effectiveHint.source === "plan" ? "Plan default" : "Default"}: ${model}`;
+}
+
+/**
+ * True when the saved NVIDIA model is missing from the catalog NVIDIA just
+ * served. A retired hosted ID answers HTTP 410, so the picker says so instead
+ * of showing it as an ordinary custom choice. Only a successful, non-empty
+ * live read counts: the offline fallback list is not authoritative.
+ */
+export function nvidiaSavedModelRetired(
+  kind: LLMProviderKind | undefined,
+  status: CatalogStatus | undefined,
+  savedModel: string | undefined,
+  liveCatalog: readonly string[],
+): boolean {
+  return kind === "nvidia" && status === "ok" && !!savedModel
+    && liveCatalog.length > 0 && !liveCatalog.includes(savedModel);
 }
 
 export function providerModels(
@@ -1342,8 +1368,14 @@ function useLiveProviderCatalogs(
       return;
     }
     let cancelled = false;
+    const current = new Set(targets.map(({ name }) => name));
+    // Drop catalogs of removed providers; the rest stay on screen while they
+    // reload. Same object when nothing is dropped, so pickers do not re-sync.
+    setCatalogs((prev) => Object.keys(prev).every((name) => current.has(name))
+      ? prev
+      : Object.fromEntries(Object.entries(prev).filter(([name]) => current.has(name))));
     setStatus(Object.fromEntries(targets.map(({ name }) => [name, "loading" as const])));
-    Promise.all(targets.map(async ({ name, kind }) => {
+    const load = async ({ name, kind }: (typeof targets)[number]) => {
       try {
         // Hosted and NVIDIA catalogs need no inputs; Groq and OmniRoute are
         // looked up by saved provider name.
@@ -1368,11 +1400,17 @@ function useLiveProviderCatalogs(
       } catch {
         return [name, [] as string[], "failed"] as const;
       }
-    })).then((entries) => {
-      if (cancelled) return;
-      setCatalogs(Object.fromEntries(entries.map(([name, models]) => [name, models])));
-      setStatus(Object.fromEntries(entries.map(([name, , state]) => [name, state])));
-    });
+    };
+    // Each catalog lands as soon as its own provider answers, so one slow
+    // upstream (NVIDIA's public API, an unreachable OmniRoute) cannot hold
+    // every picker on "Loading".
+    for (const target of targets) {
+      load(target).then(([name, models, state]) => {
+        if (cancelled) return;
+        setCatalogs((prev) => ({ ...prev, [name]: models }));
+        setStatus((prev) => ({ ...prev, [name]: state }));
+      });
+    }
     return () => { cancelled = true; };
   }, [signature, attempt]); // targets are represented by the stable signature
 

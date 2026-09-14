@@ -36,6 +36,7 @@ import {
 } from '../llm/config-binding.ts';
 import { isAnthropicCustomBaseUrl } from '../llm/anthropic.ts';
 import { GROQ_DEPRECATED_MODEL_REPLACEMENTS } from '../llm/groq-models.ts';
+import { NVIDIA_RETIRED_MODEL_REPLACEMENTS } from '../llm/nvidia-models.ts';
 import { TIERS, type Tier, parseModelRef } from '../llm/tiers.ts';
 
 // ── DB keys ──────────────────────────────────────────────────────────────
@@ -424,7 +425,7 @@ export function saveLLMSettings(
 
   // Repair old Groq references before the updated providers are reloaded.
   // No persist: the block below writes default + tiers to the DB anyway.
-  migrateDeprecatedGroqModels(config, false);
+  migrateRetiredModels(config, false);
 
   // Persist non-secret state to DB. CRITICAL: strip api_key from every
   // provider entry before serializing - the in-memory entries carry secrets
@@ -547,7 +548,7 @@ export function mergeLLMSettingsIntoConfig(
   // are present and no new-shape providers exist for them. This is the
   // upgrade path for installs that pre-date the provider/model split.
   migrateLegacyDBSettings(config);
-  migrateDeprecatedGroqModels(config, options.persistMigrations !== false);
+  migrateRetiredModels(config, options.persistMigrations !== false);
 
   // Repair installs dirtied before provider deletion cleaned up after itself.
   // Runs after the legacy migration so refs it just revived still count.
@@ -620,16 +621,22 @@ function pruneOrphanedModelRefs(config: JarvisConfig, persist = true): void {
   }
 }
 
-/** Replace known retired Groq IDs before runtime starts. */
-function migrateDeprecatedGroqModels(config: JarvisConfig, persist = true): void {
+/** Retired hosted IDs per provider kind, mapped to supported replacements. */
+const RETIRED_MODEL_REPLACEMENTS: Partial<Record<LLMProviderKind, Readonly<Record<string, string>>>> = {
+  groq: GROQ_DEPRECATED_MODEL_REPLACEMENTS,
+  nvidia: NVIDIA_RETIRED_MODEL_REPLACEMENTS,
+};
+
+/** Replace known retired Groq and NVIDIA IDs before runtime starts. */
+function migrateRetiredModels(config: JarvisConfig, persist = true): void {
   const migrateRef = (ref: string | undefined): string | undefined => {
     if (!ref) return ref;
     const separator = ref.indexOf(':');
     if (separator <= 0) return ref;
     const providerName = ref.slice(0, separator);
     const entry = config.llm.providers?.[providerName];
-    if ((entry?.kind ?? providerName) !== 'groq') return ref;
-    const replacement = GROQ_DEPRECATED_MODEL_REPLACEMENTS[ref.slice(separator + 1)];
+    const kind = (entry?.kind ?? providerName) as LLMProviderKind;
+    const replacement = RETIRED_MODEL_REPLACEMENTS[kind]?.[ref.slice(separator + 1)];
     return replacement ? `${providerName}:${replacement}` : ref;
   };
 
@@ -656,7 +663,7 @@ function migrateDeprecatedGroqModels(config: JarvisConfig, persist = true): void
   setSetting(SETTING_TIER_HIGH, config.llm.tiers?.high ?? '');
   setSetting(SETTING_TIER_MEDIUM, config.llm.tiers?.medium ?? '');
   setSetting(SETTING_TIER_LOW, config.llm.tiers?.low ?? '');
-  console.log('[LLM] Migrated deprecated Groq model references to supported replacements.');
+  console.log('[LLM] Migrated retired model references to supported replacements.');
 }
 
 /**
